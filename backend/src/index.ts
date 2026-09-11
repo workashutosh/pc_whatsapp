@@ -20,6 +20,7 @@ async function main(): Promise<void> {
   const server = createServer(app);
   const io = new Server(server, {
     cors: { origin: config.corsOrigin, credentials: true },
+    maxHttpBufferSize: 15 * 1024 * 1024,
   });
   setIo(io);
 
@@ -34,7 +35,7 @@ async function main(): Promise<void> {
   });
 
   app.use(cors({ origin: config.corsOrigin, credentials: true }));
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: "12mb" }));
 
   app.get("/health", (_req, res) => {
     res.json({

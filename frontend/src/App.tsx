@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { SetupPanel } from "./channel/SetupPanel";
 import { Login } from "./inbox/Login";
@@ -33,20 +33,22 @@ function Shell({ agent, onLogout }: { agent: SessionAgent; onLogout: () => void 
   const [connections, setConnections] = useState<Connection[]>([]);
   const [qr, setQr] = useState<QrPayload | null>(null);
   const [draft, setDraft] = useState("");
+  const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const threadRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  const selected = conversations.find((item) => item.id === selectedId) ?? null;
-  const live = connections.find((item) => item.status === "connected" || item.status === "pending") ?? null;
+  const selected = (conversations ?? []).find((item) => item.id === selectedId) ?? null;
+  const live = (connections ?? []).find((item) => item.status === "connected" || item.status === "pending") ?? null;
 
   async function refreshInbox() {
     const [{ conversations: next }, { connections: nextConnections }, { agents: nextAgents }] =
       await Promise.all([api.conversations(filter), api.connections(), api.agents()]);
-    setConversations(next);
-    setConnections(nextConnections);
-    setAgents(nextAgents);
+    setConversations(next ?? []);
+    setConnections(nextConnections ?? []);
+    setAgents(nextAgents ?? []);
   }
 
   async function openConversation(id: string) {
@@ -56,8 +58,8 @@ function Shell({ agent, onLogout }: { agent: SessionAgent; onLogout: () => void 
       api.messages(id),
       api.notes(id),
     ]);
-    setMessages(nextMessages);
-    setNotes(nextNotes);
+    setMessages(nextMessages ?? []);
+    setNotes(nextNotes ?? []);
     try {
       await api.lock(id);
     } catch (err) {
@@ -72,6 +74,7 @@ function Shell({ agent, onLogout }: { agent: SessionAgent; onLogout: () => void 
   useEffect(() => {
     const socket = io(api.url, {
       auth: { tenantId: agent.tenantId, agentId: agent.id },
+      maxHttpBufferSize: 15 * 1024 * 1024,
     });
     socket.on("conversation:updated", (conversation: Conversation) => {
       setConversations((current) => upsert(current, conversation));
@@ -120,25 +123,60 @@ function Shell({ agent, onLogout }: { agent: SessionAgent; onLogout: () => void 
 
   async function send(event?: FormEvent) {
     event?.preventDefault();
-    if (!selectedId || !draft.trim() || sending) return;
+    if (!selectedId || sending) return;
     const text = draft;
+    const image = pendingImage;
+    if (!text.trim() && !image) return;
     setDraft("");
+    setPendingImage(null);
     setSending(true);
     setError("");
     try {
-      const result = await api.send(selectedId, text);
+      const result = await api.send(
+        selectedId,
+        text,
+        image
+          ? { base64: image.dataUrl, mimetype: image.mimetype, filename: image.filename }
+          : undefined,
+      );
       setMessages((current) =>
         current.some((item) => item.id === result.message.id) ? current : [...current, result.message],
       );
       setConversations((current) => upsert(current, result.conversation));
     } catch (err) {
       setDraft(text);
+      setPendingImage(image);
       setError(err instanceof Error ? err.message : "Send failed");
       const { messages: next } = await api.messages(selectedId).catch(() => ({ messages: [] }));
       if (next.length) setMessages(next);
     } finally {
       setSending(false);
     }
+  }
+
+  function attachImage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
+      setError("Only JPEG, PNG, WebP, and GIF images are supported");
+      return;
+    }
+    if (file.size > 6 * 1024 * 1024) {
+      setError("Image is too large (max 6 MB)");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!dataUrl) {
+        setError("Could not read that image");
+        return;
+      }
+      setPendingImage({ dataUrl, mimetype: file.type, filename: file.name });
+      setError("");
+    };
+    reader.readAsDataURL(file);
   }
 
   return (
@@ -222,7 +260,14 @@ function Shell({ agent, onLogout }: { agent: SessionAgent; onLogout: () => void 
                   className={`bubble ${item.message.direction}${item.message.status === "failed" ? " failed" : ""}`}
                   key={item.message.id}
                 >
-                  {item.message.payload.text || `[${item.message.payload.type}]`}
+                  {item.message.payload.media?.kind === "image" && item.message.payload.media.dataUrl ? (
+                    <img
+                      className="media"
+                      src={item.message.payload.media.dataUrl}
+                      alt={item.message.payload.text || "Photo"}
+                    />
+                  ) : null}
+                  {messageCaption(item.message)}
                   <span className="time">
                     {formatTime(item.message.created_at)} · {item.message.status}
                   </span>
@@ -231,18 +276,44 @@ function Shell({ agent, onLogout }: { agent: SessionAgent; onLogout: () => void 
             )}
           </div>
           <form className="composer" onSubmit={send}>
-            <textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="Reply to the customer on WhatsApp"
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void send();
-                }
-              }}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              hidden
+              onChange={attachImage}
             />
-            <button className="primary" type="submit" disabled={sending || !draft.trim()}>
+            <button
+              className="ghost attach"
+              type="button"
+              title="Attach image"
+              onClick={() => fileRef.current?.click()}
+              disabled={sending}
+            >
+              📎
+            </button>
+            <div className="composer-main">
+              {pendingImage ? (
+                <div className="composer-preview">
+                  <img src={pendingImage.dataUrl} alt={pendingImage.filename} />
+                  <button className="ghost" type="button" onClick={() => setPendingImage(null)}>
+                    Remove
+                  </button>
+                </div>
+              ) : null}
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder={pendingImage ? "Add a caption (optional)" : "Reply to the customer on WhatsApp"}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void send();
+                  }
+                }}
+              />
+            </div>
+            <button className="primary" type="submit" disabled={sending || (!draft.trim() && !pendingImage)}>
               {sending ? "Sending…" : "Send"}
             </button>
           </form>
@@ -331,6 +402,22 @@ function upsert(list: Conversation[], conversation: Conversation): Conversation[
   return [conversation, ...next].sort((a, b) =>
     (b.last_message_at ?? b.id).localeCompare(a.last_message_at ?? a.id),
   );
+}
+
+type PendingImage = {
+  dataUrl: string;
+  mimetype: string;
+  filename: string;
+};
+
+function messageCaption(message: Message): string {
+  const text = message.payload.text?.trim();
+  const isImage = message.payload.media?.kind === "image" || message.payload.type === "imageMessage";
+  if (isImage) {
+    if (text && text !== "[image]") return text;
+    return message.payload.media?.dataUrl ? "" : "Photo";
+  }
+  return message.payload.text || `[${message.payload.type}]`;
 }
 
 function formatTime(value: string): string {

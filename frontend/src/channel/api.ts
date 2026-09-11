@@ -1,4 +1,4 @@
-import type { Connection, Conversation, Message, QrPayload } from "../types";
+import type { Connection, Conversation, Message, QrPayload, SendImage } from "../types";
 import { request } from "../lib/http";
 
 /** Core WhatsApp channel API — login/QR, connection, send. Inbox UI should not reimplement these. */
@@ -20,9 +20,9 @@ export const channelApi = {
     request<{ connection: Connection; qr: QrPayload | null }>(`/api/connections/${id}/qr`),
   status: (id: string) =>
     request<{ connection: Connection }>(`/api/connections/${id}/status`),
-  send: (id: string, text: string) =>
+  send: (id: string, text: string, image?: SendImage) =>
     request<{ message: Message; conversation: Conversation }>(`/api/conversations/${id}/messages`, {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(image ? { text, image } : { text }),
     }),
 };

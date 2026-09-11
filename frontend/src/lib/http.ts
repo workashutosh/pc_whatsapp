@@ -1,6 +1,6 @@
 import type { SessionAgent } from "../types";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
+const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:3001";
 
 let session: SessionAgent | null = null;
 
@@ -37,9 +37,15 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { ...headers(), ...(init?.headers ?? {}) },
   });
-  const body = await response.json().catch(() => ({}));
+  const contentType = response.headers.get("content-type") ?? "";
+  const body = contentType.includes("application/json")
+    ? await response.json().catch(() => ({}))
+    : {};
   if (!response.ok) {
-    throw new Error(body.error ?? `Request failed (${response.status})`);
+    throw new Error((body as { error?: string }).error ?? `Request failed (${response.status})`);
+  }
+  if (!contentType.includes("application/json")) {
+    throw new Error(`Request failed (${response.status})`);
   }
   return body as T;
 }

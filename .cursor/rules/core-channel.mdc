@@ -13,11 +13,11 @@ WhatsApp login (QR / linked device), connection state, send, receive, JID/LID ha
 
 - Backend: `backend/src/core/`
 - Frontend: `frontend/src/channel/`
-- HTTP: `/webhook/whatsapp`, `/api/connections`, send path via `sendWhatsAppText`
+- HTTP: `/webhook/whatsapp`, `/api/connections`, send path via `sendWhatsAppText` / `sendWhatsAppImage`
 
 **`backend/src/core` must never import from `backend/src/inbox`.**
 
-Inbox code must send and receive only through `backend/src/core` (`sendWhatsAppText`, `parseIncomingWhatsApp`, connection helpers). Do not call Evolution/Demo providers from inbox.
+Inbox code must send and receive only through `backend/src/core` (`sendWhatsAppText`, `sendWhatsAppImage`, `parseIncomingWhatsApp`, connection helpers). Do not call Evolution/Demo providers from inbox.
 
 ## Inbox layer (safe to change)
 

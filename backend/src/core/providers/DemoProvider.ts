@@ -2,6 +2,7 @@ import type {
   ConnectNumberResult,
   NormalizedIncomingEvent,
   QrPayload,
+  SendImageInput,
   SendMessageInput,
   SendMessageResult,
   WhatsAppConnection,
@@ -46,6 +47,13 @@ export class DemoProvider implements WhatsAppProvider {
     return {
       waMessageId: `demo-${Date.now()}`,
       raw: { demo: true, to: input.to, text: input.text },
+    };
+  }
+
+  async sendImage(input: SendImageInput): Promise<SendMessageResult> {
+    return {
+      waMessageId: `demo-img-${Date.now()}`,
+      raw: { demo: true, to: input.to, image: true, caption: input.caption ?? null },
     };
   }
 

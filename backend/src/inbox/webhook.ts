@@ -8,7 +8,7 @@ import { findOrCreateConversation } from "./conversations.js";
 import { insertMessage, updateMessageStatus } from "./messages.js";
 
 export async function handleProviderWebhook(raw: unknown): Promise<{ ok: boolean; ignored?: string }> {
-  const event = parseIncomingWhatsApp(raw);
+  const event = await parseIncomingWhatsApp(raw);
   if (!event) {
     return { ok: true, ignored: "unrecognized" };
   }
@@ -67,11 +67,33 @@ export async function handleProviderWebhook(raw: unknown): Promise<{ ok: boolean
       text: event.text,
       type: event.type,
       pushName: event.pushName,
-      raw: event.raw,
+      media: event.media ?? null,
+      raw: compactWebhookRaw(event.raw),
     },
     status: event.status,
     createdAt: event.timestamp,
   });
 
   return { ok: true };
+}
+
+function compactWebhookRaw(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const body = { ...(raw as Record<string, unknown>) };
+  if (!body.data || typeof body.data !== "object") return body;
+  const data = { ...(body.data as Record<string, unknown>) };
+  delete data.base64;
+  delete data.messageBase64;
+  if (data.message && typeof data.message === "object") {
+    const message = { ...(data.message as Record<string, unknown>) };
+    delete message.base64;
+    if (message.imageMessage && typeof message.imageMessage === "object") {
+      const image = { ...(message.imageMessage as Record<string, unknown>) };
+      delete image.base64;
+      message.imageMessage = image;
+    }
+    data.message = message;
+  }
+  body.data = data;
+  return body;
 }

@@ -123,6 +123,7 @@ conversationRouter.post(
       conversationId: req.params.id,
       agentId,
       text: String(req.body?.text ?? ""),
+      image: parseImageBody(req.body?.image),
     });
     res.status(201).json(result);
   }),
@@ -159,4 +160,18 @@ conversationRouter.post(
 function parseFilter(value: unknown): "all" | "mine" | "unassigned" {
   if (value === "mine" || value === "unassigned") return value;
   return "all";
+}
+
+function parseImageBody(
+  value: unknown,
+): { base64: string; mimetype?: string; filename?: string } | null {
+  if (!value || typeof value !== "object") return null;
+  const image = value as Record<string, unknown>;
+  const base64 = typeof image.base64 === "string" ? image.base64 : "";
+  if (!base64.trim()) return null;
+  return {
+    base64,
+    mimetype: typeof image.mimetype === "string" ? image.mimetype : undefined,
+    filename: typeof image.filename === "string" ? image.filename : undefined,
+  };
 }

@@ -21,7 +21,27 @@ export interface MessagePayload {
   text: string | null;
   type: string;
   pushName?: string | null;
+  media?: MessageMedia | null;
   raw?: unknown;
+}
+
+export interface MessageMedia {
+  kind: "image";
+  mimetype: string;
+  caption?: string | null;
+  filename?: string | null;
+  dataUrl?: string | null;
+}
+
+export interface SendImageInput {
+  connection: WhatsAppConnection;
+  to: string;
+  caption?: string;
+  image: {
+    base64: string;
+    mimetype: string;
+    filename?: string;
+  };
 }
 
 export interface ConnectNumberResult {
@@ -58,6 +78,7 @@ export interface NormalizedIncomingMessage {
   pushName: string | null;
   timestamp: Date;
   status: MessageStatus;
+  media?: MessageMedia | null;
   raw: unknown;
 }
 
@@ -96,6 +117,8 @@ export interface WhatsAppProvider {
   switchNumber(tenantId: string, oldConnection: WhatsAppConnection, instanceName: string): Promise<ConnectNumberResult>;
   disconnectNumber(connection: WhatsAppConnection): Promise<void>;
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;
+  sendImage(input: SendImageInput): Promise<SendMessageResult>;
+  resolveIncomingMedia?(event: NormalizedIncomingMessage): Promise<MessageMedia | null>;
   getQr(connection: WhatsAppConnection): Promise<QrPayload | null>;
   getRemoteStatus(connection: WhatsAppConnection): Promise<{
     state: string;

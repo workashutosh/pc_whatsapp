@@ -2,9 +2,11 @@ import {
   evolutionRecipient,
   getLiveConnection,
   jidFromStoredPayload,
+  sendWhatsAppImage,
   sendWhatsAppText,
 } from "../core/index.js";
-import type { MessagePayload, MessageStatus } from "../core/types.js";
+import { normalizeImageInput } from "../core/media.js";
+import type { MessageMedia, MessagePayload, MessageStatus } from "../core/types.js";
 import { isUniqueViolation, query } from "../db.js";
 import { emitToTenant } from "../realtime/bus.js";
 import type { MessageRecord } from "./types.js";
@@ -107,10 +109,18 @@ export async function sendAgentReply(input: {
   conversationId: string;
   agentId: string;
   text: string;
+  image?: { base64: string; mimetype?: string; filename?: string } | null;
 }): Promise<{ message: MessageRecord; conversation: ConversationView }> {
   const text = input.text.trim();
-  if (!text) {
-    throw Object.assign(new Error("Message text is required"), { status: 400 });
+  const image = input.image?.base64
+    ? normalizeImageInput({
+        base64: input.image.base64,
+        mimetype: input.image.mimetype,
+        filename: input.image.filename,
+      })
+    : null;
+  if (!text && !image) {
+    throw Object.assign(new Error("Message text or image is required"), { status: 400 });
   }
 
   const conversation = await getConversation(input.tenantId, input.conversationId);
@@ -126,13 +136,33 @@ export async function sendAgentReply(input: {
   }
 
   const to = await resolveSendRecipient(conversation);
+  const media: MessageMedia | null = image
+    ? {
+        kind: "image",
+        mimetype: image.mimetype,
+        caption: text || null,
+        filename: image.filename,
+        dataUrl: image.dataUrl,
+      }
+    : null;
+  const payloadBase: MessagePayload = media
+    ? { text: text || null, type: "imageMessage", media }
+    : { text, type: "conversation" };
+
   let sendResult;
   try {
-    sendResult = await sendWhatsAppText({
-      connection: live,
-      to,
-      text,
-    });
+    sendResult = image
+      ? await sendWhatsAppImage({
+          connection: live,
+          to,
+          caption: text || undefined,
+          image: { base64: image.raw, mimetype: image.mimetype, filename: image.filename },
+        })
+      : await sendWhatsAppText({
+          connection: live,
+          to,
+          text,
+        });
   } catch (error) {
     const failed = await insertMessage({
       tenantId: input.tenantId,
@@ -140,7 +170,7 @@ export async function sendAgentReply(input: {
       connectionId: live.id,
       direction: "out",
       waMessageId: null,
-      payload: { text, type: "conversation", raw: { error: String(error) } },
+      payload: { ...payloadBase, raw: { error: String(error) } },
       status: "failed",
       sentByAgentId: input.agentId,
     });
@@ -156,7 +186,7 @@ export async function sendAgentReply(input: {
     connectionId: live.id,
     direction: "out",
     waMessageId: sendResult.waMessageId,
-    payload: { text, type: "conversation", raw: sendResult.raw },
+    payload: { ...payloadBase, raw: sendResult.raw },
     status: "sent",
     sentByAgentId: input.agentId,
   });

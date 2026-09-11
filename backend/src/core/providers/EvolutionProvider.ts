@@ -1,9 +1,13 @@
 import { config } from "../../config.js";
+import { dataUrlFromBase64, normalizeImageInput } from "../media.js";
 import { evolutionRecipient, jidFromWebhookKey, mapWaStatus, phoneFromJid } from "../phone.js";
 import type {
   ConnectNumberResult,
+  MessageMedia,
   NormalizedIncomingEvent,
+  NormalizedIncomingMessage,
   QrPayload,
+  SendImageInput,
   SendMessageInput,
   SendMessageResult,
   WhatsAppConnection,
@@ -113,6 +117,75 @@ export class EvolutionProvider implements WhatsAppProvider {
     return { waMessageId, raw };
   }
 
+  async sendImage(input: SendImageInput): Promise<SendMessageResult> {
+    const instance = requireInstance(input.connection);
+    const number = evolutionRecipient(input.to);
+    const image = normalizeImageInput(input.image);
+    const caption = input.caption?.trim() || undefined;
+    const payload = {
+      number,
+      mediatype: "image",
+      media: image.raw,
+      mimetype: image.mimetype,
+      fileName: image.filename,
+      caption,
+    };
+    let raw: unknown;
+    try {
+      raw = await this.request("POST", `/message/sendMedia/${encodeURIComponent(instance)}`, payload);
+    } catch (error) {
+      if (!(error instanceof EvolutionApiError) || error.status !== 400) {
+        throw error;
+      }
+      raw = await this.request("POST", `/message/sendMedia/${encodeURIComponent(instance)}`, {
+        number,
+        mediatype: "image",
+        mimetype: image.mimetype,
+        fileName: image.filename,
+        caption,
+        media: image.raw,
+        mediaMessage: {
+          mediatype: "image",
+          media: image.raw,
+          mimetype: image.mimetype,
+          fileName: image.filename,
+          caption,
+        },
+      });
+    }
+    const waMessageId =
+      (raw as { key?: { id?: string } })?.key?.id ??
+      (raw as { messageId?: string })?.messageId ??
+      null;
+    return { waMessageId, raw };
+  }
+
+  async resolveIncomingMedia(event: NormalizedIncomingMessage): Promise<MessageMedia | null> {
+    const instance = event.instanceName;
+    const data = asRecord(asRecord(event.raw)?.data) ?? asRecord(event.raw);
+    if (!data) return event.media ?? null;
+    try {
+      const fetched = await this.request<Record<string, unknown>>(
+        "POST",
+        `/chat/getBase64FromMediaMessage/${encodeURIComponent(instance)}`,
+        { message: data, convertToMp4: false },
+      );
+      const base64 = String(fetched.base64 ?? fetched.base64Data ?? "");
+      const mimetype = String(fetched.mimetype ?? event.media?.mimetype ?? "image/jpeg");
+      const dataUrl = dataUrlFromBase64(base64, mimetype);
+      if (!dataUrl) return event.media ?? null;
+      return {
+        kind: "image",
+        mimetype,
+        caption: event.media?.caption ?? null,
+        filename: event.media?.filename ?? null,
+        dataUrl,
+      };
+    } catch {
+      return event.media ?? null;
+    }
+  }
+
   async getQr(connection: WhatsAppConnection): Promise<QrPayload | null> {
     const instance = requireInstance(connection);
     return this.fetchQr(instance);
@@ -195,6 +268,8 @@ export class EvolutionProvider implements WhatsAppProvider {
 
     const timestampRaw = Number(data.messageTimestamp ?? Date.now() / 1000);
     const timestamp = new Date(timestampRaw > 1e12 ? timestampRaw : timestampRaw * 1000);
+    const unwrapped = unwrapWhatsAppMessage(message);
+    const media = extractImageMedia(data, unwrapped);
 
     return {
       kind: "message",
@@ -203,11 +278,12 @@ export class EvolutionProvider implements WhatsAppProvider {
       fromMe: Boolean(key.fromMe),
       customerPhone,
       customerJid,
-      text: extractText(message),
-      type: String(data.messageType ?? "conversation"),
+      text: extractText(unwrapped),
+      type: media ? "imageMessage" : String(data.messageType ?? "conversation"),
       pushName: data.pushName ? String(data.pushName) : null,
       timestamp,
       status: mapWaStatus(data.status ?? "sent"),
+      media,
       raw,
     };
   }
@@ -299,6 +375,46 @@ function requireInstance(connection: WhatsAppConnection): string {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function unwrapWhatsAppMessage(message: Record<string, unknown>): Record<string, unknown> {
+  const wrappers = ["viewOnceMessage", "viewOnceMessageV2", "ephemeralMessage", "documentWithCaptionMessage"];
+  for (const name of wrappers) {
+    const wrapped = asRecord(message[name]);
+    const inner = asRecord(wrapped?.message);
+    if (inner) return { ...message, ...inner };
+  }
+  return message;
+}
+
+function extractImageMedia(
+  data: Record<string, unknown>,
+  message: Record<string, unknown>,
+): MessageMedia | null {
+  const image = asRecord(message.imageMessage);
+  const type = String(data.messageType ?? "");
+  if (!image && type !== "imageMessage") return null;
+  const mimetype = String(image?.mimetype ?? "image/jpeg");
+  const caption = typeof image?.caption === "string" ? image.caption : null;
+  const filename = typeof image?.fileName === "string" ? image.fileName : null;
+  const candidates = [data.base64, message.base64, image?.base64, data.messageBase64];
+  let dataUrl: string | null = null;
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.length > 80) {
+      dataUrl = dataUrlFromBase64(candidate, mimetype);
+      break;
+    }
+  }
+  if (!dataUrl && typeof image?.jpegThumbnail === "string") {
+    dataUrl = dataUrlFromBase64(image.jpegThumbnail, "image/jpeg");
+  }
+  return {
+    kind: "image",
+    mimetype,
+    caption,
+    filename,
+    dataUrl,
+  };
 }
 
 function extractQr(source: unknown): QrPayload | null {

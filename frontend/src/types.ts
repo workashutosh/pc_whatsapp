@@ -39,15 +39,29 @@ export type Conversation = {
   last_message_text: string | null;
 };
 
+export type MessageMedia = {
+  kind: "image";
+  mimetype: string;
+  caption?: string | null;
+  filename?: string | null;
+  dataUrl?: string | null;
+};
+
 export type Message = {
   id: string;
   conversation_id: string;
   direction: "in" | "out";
   wa_message_id: string | null;
-  payload: { text: string | null; type: string };
+  payload: { text: string | null; type: string; media?: MessageMedia | null };
   status: string;
   sent_by_agent_id: string | null;
   created_at: string;
+};
+
+export type SendImage = {
+  base64: string;
+  mimetype?: string;
+  filename?: string;
 };
 
 export type Note = {

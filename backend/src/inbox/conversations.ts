@@ -18,7 +18,12 @@ const CONVERSATION_SELECT = `
     assigned.name AS assigned_agent_name,
     locker.name AS locked_by_agent_name,
     (
-      SELECT json_extract(m.payload, '$.text')
+      SELECT CASE
+        WHEN length(trim(coalesce(json_extract(m.payload, '$.text'), ''))) > 0
+          THEN json_extract(m.payload, '$.text')
+        WHEN json_extract(m.payload, '$.media.kind') = 'image' THEN 'Photo'
+        ELSE json_extract(m.payload, '$.text')
+      END
       FROM messages m
       WHERE m.conversation_id = c.id AND m.tenant_id = c.tenant_id
       ORDER BY m.created_at DESC

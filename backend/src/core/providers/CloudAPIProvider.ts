@@ -2,6 +2,7 @@ import type {
   ConnectNumberResult,
   NormalizedIncomingEvent,
   QrPayload,
+  SendImageInput,
   SendMessageInput,
   SendMessageResult,
   WhatsAppConnection,
@@ -24,6 +25,10 @@ export class CloudAPIProvider implements WhatsAppProvider {
   }
 
   async sendMessage(_input: SendMessageInput): Promise<SendMessageResult> {
+    this.unsupported();
+  }
+
+  async sendImage(_input: SendImageInput): Promise<SendMessageResult> {
     this.unsupported();
   }
 
