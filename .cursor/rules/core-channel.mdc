@@ -1,0 +1,30 @@
+---
+description: Keep the WhatsApp core channel isolated from inbox/CRM features
+alwaysApply: true
+---
+
+# Two-layer architecture
+
+The product has a **core WhatsApp channel** and an **inbox layer** on top of it. Changing agents, assignment, login UX, notes, or filters must not rewrite send/receive/QR logic.
+
+## Core layer (do not break)
+
+WhatsApp login (QR / linked device), connection state, send, receive, JID/LID handling, and provider adapters.
+
+- Backend: `backend/src/core/`
+- Frontend: `frontend/src/channel/`
+- HTTP: `/webhook/whatsapp`, `/api/connections`, send path via `sendWhatsAppText`
+
+**`backend/src/core` must never import from `backend/src/inbox`.**
+
+Inbox code must send and receive only through `backend/src/core` (`sendWhatsAppText`, `parseIncomingWhatsApp`, connection helpers). Do not call Evolution/Demo providers from inbox.
+
+## Inbox layer (safe to change)
+
+Agent login, creating/listing agents, assigning/claiming/locking chats, internal notes, conversation list filters.
+
+- Backend: `backend/src/inbox/`
+- Frontend: `frontend/src/inbox/`
+- HTTP: `/api/auth`, `/api/conversations` (except the actual WhatsApp send, which calls core)
+
+When adding inbox features, persist and display around core events. Do not fork a second WhatsApp client or duplicate webhook parsing.

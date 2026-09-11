@@ -1,0 +1,39 @@
+/**
+ * Core WhatsApp channel.
+ * Login (QR), send, receive, and connection state live here.
+ * Do not import inbox/agents/assignment from this folder.
+ */
+export { parseIncomingWhatsApp, sendWhatsAppText } from "./channel.js";
+export {
+  connectNumber,
+  disconnectNumber,
+  getConnection,
+  getConnectionByInstanceName,
+  getLiveConnection,
+  listConnections,
+  markConnectionState,
+  refreshConnectionQr,
+  refreshRemoteStatus,
+  switchNumber,
+} from "./connections.js";
+export {
+  evolutionRecipient,
+  instanceNameForTenant,
+  isPreferredJid,
+  jidFromStoredPayload,
+  jidFromWebhookKey,
+  mapWaStatus,
+  phoneFromJid,
+} from "./phone.js";
+export { getProvider, resolveProviderKind } from "./providers/registry.js";
+export type {
+  ConnectNumberResult,
+  MessagePayload,
+  MessageStatus,
+  NormalizedIncomingEvent,
+  ProviderKind,
+  QrPayload,
+  SendMessageInput,
+  SendMessageResult,
+  WhatsAppConnection,
+} from "./types.js";

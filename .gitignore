@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+.vscode/
+coverage/
+backend/dist/
+frontend/dist/
+*.tsbuildinfo
+backend/data/
+*.sqlite
+.cursor/*
+!.cursor/rules/
