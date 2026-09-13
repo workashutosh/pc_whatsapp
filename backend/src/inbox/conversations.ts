@@ -2,8 +2,15 @@ import { config } from "../config.js";
 import { isPreferredJid } from "../core/phone.js";
 import { query } from "../db.js";
 import { emitToTenant } from "../realtime/bus.js";
-import { listAgents } from "./agents.js";
-import type { Conversation } from "./types.js";
+import { getAgentInTenant, getTenant, listAgents } from "./agents.js";
+import { assertAssignable, canSeeHistoryItem } from "./policy.js";
+import type { AgentRole, Conversation, ConversationStatus } from "./types.js";
+
+export interface ConversationListQuery {
+  q?: string;
+  status?: ConversationStatus | "all";
+  assignedAgentId?: string | "unassigned" | "me" | "all";
+}
 
 export interface ConversationView extends Conversation {
   assigned_agent_name: string | null;
@@ -37,25 +44,50 @@ const CONVERSATION_SELECT = `
 
 export async function listConversations(
   tenantId: string,
-  filter: "all" | "mine" | "unassigned",
-  agentId: string,
+  actor: { id: string; role: AgentRole },
+  filters: ConversationListQuery = {},
 ): Promise<ConversationView[]> {
   await releaseExpiredLocks(tenantId);
   const params: unknown[] = [tenantId];
   let where = "c.tenant_id = $1";
-  if (filter === "mine") {
-    params.push(agentId);
-    where += ` AND c.assigned_agent_id = $2`;
-  } else if (filter === "unassigned") {
+
+  if (actor.role === "agent") {
+    params.push(actor.id);
+    where += ` AND c.assigned_agent_id = $${params.length}`;
+  } else if (filters.assignedAgentId === "unassigned") {
     where += " AND c.assigned_agent_id IS NULL";
+  } else if (filters.assignedAgentId === "me") {
+    params.push(actor.id);
+    where += ` AND c.assigned_agent_id = $${params.length}`;
+  } else if (filters.assignedAgentId && filters.assignedAgentId !== "all") {
+    params.push(filters.assignedAgentId);
+    where += ` AND c.assigned_agent_id = $${params.length}`;
   }
+
+  if (filters.status && filters.status !== "all") {
+    params.push(filters.status);
+    where += ` AND c.status = $${params.length}`;
+  }
+
+  if (filters.q?.trim()) {
+    params.push(`%${filters.q.trim().toLowerCase()}%`);
+    const idx = params.length;
+    where += ` AND (
+      lower(coalesce(c.customer_name, '')) LIKE $${idx}
+      OR lower(c.customer_phone) LIKE $${idx}
+      OR lower(coalesce(c.customer_jid, '')) LIKE $${idx}
+    )`;
+  }
+
   const { rows } = await query<ConversationView>(
     `${CONVERSATION_SELECT}
      WHERE ${where}
      ORDER BY c.last_message_at IS NULL, c.last_message_at DESC, c.created_at DESC`,
     params,
   );
-  return rows;
+  return rows.map((row) =>
+    canSeeHistoryItem(row, actor, row.last_message_at) ? row : { ...row, last_message_text: null },
+  );
 }
 
 export async function getConversation(
@@ -69,6 +101,21 @@ export async function getConversation(
     [conversationId, tenantId],
   );
   return rows[0] ?? null;
+}
+
+export async function getConversationForActor(
+  tenantId: string,
+  conversationId: string,
+  actor: { id: string; role: AgentRole },
+): Promise<ConversationView> {
+  const conversation = await getConversation(tenantId, conversationId);
+  if (!conversation) {
+    throw Object.assign(new Error("Conversation not found"), { status: 404 });
+  }
+  if (actor.role === "agent" && conversation.assigned_agent_id !== actor.id) {
+    throw Object.assign(new Error("Conversation not found"), { status: 404 });
+  }
+  return conversation;
 }
 
 export async function findOrCreateConversation(input: {
@@ -102,10 +149,13 @@ export async function findOrCreateConversation(input: {
   }
 
   const assignedAgentId = await maybeAssign(input.tenantId);
+  const tenant = assignedAgentId ? await getTenant(input.tenantId) : null;
+  const seeHistory = tenant ? tenant.agents_can_see_history !== 0 && tenant.agents_can_see_history !== false : 1;
   const inserted = await query<Conversation>(
     `INSERT INTO conversations (
-       tenant_id, connection_id, customer_phone, customer_jid, customer_name, assigned_agent_id, status, last_message_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, 'open', now())
+       tenant_id, connection_id, customer_phone, customer_jid, customer_name,
+       assigned_agent_id, assigned_at, assignee_can_see_history, status, last_message_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $6 IS NULL THEN NULL ELSE now() END, $7, 'open', now())
      RETURNING *`,
     [
       input.tenantId,
@@ -114,6 +164,7 @@ export async function findOrCreateConversation(input: {
       input.customerJid ?? null,
       input.customerName ?? null,
       assignedAgentId,
+      assignedAgentId ? (seeHistory ? 1 : 0) : null,
     ],
   );
   return inserted.rows[0];
@@ -131,11 +182,15 @@ export async function claimConversation(
   if (current.assigned_agent_id && current.assigned_agent_id !== agentId) {
     throw Object.assign(new Error("Conversation is already assigned to another agent"), { status: 409 });
   }
+  const tenant = await getTenant(tenantId);
+  const seeHistory = tenant ? tenant.agents_can_see_history !== 0 && tenant.agents_can_see_history !== false : true;
   await query(
     `UPDATE conversations
-     SET assigned_agent_id = $3
+     SET assigned_agent_id = $3,
+         assigned_at = CASE WHEN assigned_agent_id = $3 THEN assigned_at ELSE now() END,
+         assignee_can_see_history = $4
      WHERE id = $1 AND tenant_id = $2`,
-    [conversationId, tenantId, agentId],
+    [conversationId, tenantId, agentId, seeHistory ? 1 : 0],
   );
   return (await getConversation(tenantId, conversationId))!;
 }
@@ -144,16 +199,33 @@ export async function assignConversation(
   tenantId: string,
   conversationId: string,
   agentId: string | null,
+  options: { canSeeHistory?: boolean } = {},
 ): Promise<ConversationView> {
   const current = await getConversation(tenantId, conversationId);
   if (!current) {
     throw Object.assign(new Error("Conversation not found"), { status: 404 });
   }
+  if (agentId) {
+    const agent = await getAgentInTenant(agentId, tenantId);
+    assertAssignable(agent);
+  }
+  const tenant = await getTenant(tenantId);
+  const defaultSeeHistory = tenant
+    ? tenant.agents_can_see_history !== 0 && tenant.agents_can_see_history !== false
+    : true;
+  const seeHistory = options.canSeeHistory ?? defaultSeeHistory;
   await query(
     `UPDATE conversations
-     SET assigned_agent_id = $3
+     SET assigned_agent_id = $3,
+         assigned_at = CASE
+           WHEN $3 IS NULL THEN NULL
+           WHEN $4 = 0 THEN now()
+           WHEN assigned_agent_id = $3 THEN COALESCE(assigned_at, now())
+           ELSE now()
+         END,
+         assignee_can_see_history = $4
      WHERE id = $1 AND tenant_id = $2`,
-    [conversationId, tenantId, agentId],
+    [conversationId, tenantId, agentId, agentId ? (seeHistory ? 1 : 0) : null],
   );
   const updated = (await getConversation(tenantId, conversationId))!;
   emitToTenant(tenantId, "conversation:updated", updated);
@@ -191,10 +263,13 @@ export async function lockConversation(
     throw Object.assign(new Error("Conversation not found"), { status: 404 });
   }
   if (current.locked_by_agent_id && current.locked_by_agent_id !== agentId) {
-    throw Object.assign(
-      new Error(`Conversation is locked by ${current.locked_by_agent_name ?? "another agent"}`),
-      { status: 409 },
-    );
+    const assigneeTakeover = current.assigned_agent_id === agentId;
+    if (!assigneeTakeover) {
+      throw Object.assign(
+        new Error(`Conversation is locked by ${current.locked_by_agent_name ?? "another agent"}`),
+        { status: 409 },
+      );
+    }
   }
   await query(
     `UPDATE conversations
@@ -226,7 +301,7 @@ export async function unlockConversation(
 export async function touchConversation(tenantId: string, conversationId: string): Promise<void> {
   await query(
     `UPDATE conversations
-     SET last_message_at = now(), status = CASE WHEN status = 'closed' THEN 'open' ELSE status END
+     SET last_message_at = now()
      WHERE id = $1 AND tenant_id = $2`,
     [conversationId, tenantId],
   );
@@ -252,14 +327,16 @@ async function maybeAssign(tenantId: string): Promise<string | null> {
   const mode = rows[0]?.assignment_mode ?? config.assignmentMode;
   if (mode !== "round_robin") return null;
 
-  const agents = await listAgents(tenantId);
+  const agents = (await listAgents(tenantId, { status: "active", role: "agent" })).filter(
+    (agent) => agent.status === "active",
+  );
   if (agents.length === 0) return null;
   const counts = await query<{ id: string }>(
     `SELECT a.id
      FROM agents a
      LEFT JOIN conversations c
        ON c.assigned_agent_id = a.id AND c.tenant_id = a.tenant_id AND c.status = 'open'
-     WHERE a.tenant_id = $1
+     WHERE a.tenant_id = $1 AND a.status = 'active' AND a.role = 'agent'
      GROUP BY a.id
      ORDER BY COUNT(c.id) ASC, a.created_at ASC
      LIMIT 1`,

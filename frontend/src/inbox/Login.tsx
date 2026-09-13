@@ -1,16 +1,35 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import { api, setSession } from "../api";
 import type { SessionAgent } from "../types";
 
+const DEMO_ACCOUNTS = [
+  { label: "Alice · admin", email: "alice@acme.test", password: "AcmeAdmin!1" },
+  { label: "Bob · manager", email: "bob@acme.test", password: "AcmeManager!1" },
+  { label: "Riya · agent", email: "riya@acme.test", password: "AcmeAgent!1" },
+] as const;
+
 export function Login({ onLogin }: { onLogin: (agent: SessionAgent) => void }) {
-  const [email, setEmail] = useState("alice@acme.test");
+  const formRef = useRef<HTMLFormElement>(null);
   const [error, setError] = useState("");
 
-  async function submit(event: FormEvent) {
+  function fillDemo(email: string, password: string) {
+    const form = formRef.current;
+    if (!form) return;
+    const emailInput = form.elements.namedItem("email") as HTMLInputElement | null;
+    const passwordInput = form.elements.namedItem("password") as HTMLInputElement | null;
+    if (emailInput) emailInput.value = email;
+    if (passwordInput) passwordInput.value = password;
+    setError("");
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const email = String(data.get("email") ?? "").trim();
+    const password = String(data.get("password") ?? "").trim();
     setError("");
     try {
-      const { agent } = await api.login(email);
+      const { agent } = await api.login(email, password);
       setSession(agent);
       onLogin(agent);
     } catch (err) {
@@ -20,17 +39,43 @@ export function Login({ onLogin }: { onLogin: (agent: SessionAgent) => void }) {
 
   return (
     <div className="login">
-      <div className="login-card">
-        <div className="brand">WA</div>
-        <h1>Shared inbox</h1>
-        <p>Sign in as an agent to work the tenant WhatsApp number.</p>
-        <form onSubmit={submit}>
-          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="agent email" />
-          <button className="primary" type="submit">Continue</button>
-          {error ? <div className="error">{error}</div> : null}
-          <div className="hint">Demo agents: alice@acme.test · bob@acme.test</div>
-        </form>
-      </div>
+      <form ref={formRef} className="login-card" onSubmit={submit} autoComplete="off">
+        <div className="brand">IN</div>
+        <h1>Inbox</h1>
+        <p>Sign in with your work account.</p>
+        <label>
+          Email
+          <input
+            name="email"
+            type="email"
+            defaultValue="alice@acme.test"
+            autoComplete="off"
+          />
+        </label>
+        <label>
+          Password
+          <input
+            name="password"
+            type="password"
+            defaultValue="AcmeAdmin!1"
+            autoComplete="off"
+          />
+        </label>
+        <button className="primary" type="submit">Sign in</button>
+        {error ? <div className="error">{error}</div> : null}
+        <div className="hint demo-accounts">
+          {DEMO_ACCOUNTS.map((account) => (
+            <button
+              key={account.email}
+              type="button"
+              className="ghost"
+              onClick={() => fillDemo(account.email, account.password)}
+            >
+              {account.label}
+            </button>
+          ))}
+        </div>
+      </form>
     </div>
   );
 }

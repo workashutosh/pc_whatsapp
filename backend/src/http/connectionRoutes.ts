@@ -7,7 +7,7 @@ import {
   refreshRemoteStatus,
   switchNumber,
 } from "../core/index.js";
-import { asyncHandler, requireAgent, type AuthedRequest } from "./middleware.js";
+import { asyncHandler, requireAction, requireAgent, type AuthedRequest } from "./middleware.js";
 
 export const connectionRouter = Router();
 connectionRouter.use(requireAgent);
@@ -22,6 +22,7 @@ connectionRouter.get(
 
 connectionRouter.post(
   "/",
+  requireAction("manageWhatsApp"),
   asyncHandler(async (req, res) => {
     const { tenantId } = req as AuthedRequest;
     const provider = req.body?.provider === "cloud_api" ? "cloud_api" : "evolution";
@@ -32,6 +33,7 @@ connectionRouter.post(
 
 connectionRouter.post(
   "/switch",
+  requireAction("manageWhatsApp"),
   asyncHandler(async (req, res) => {
     const { tenantId } = req as AuthedRequest;
     const provider = req.body?.provider === "cloud_api" ? "cloud_api" : "evolution";
@@ -42,6 +44,7 @@ connectionRouter.post(
 
 connectionRouter.post(
   "/:id/disconnect",
+  requireAction("manageWhatsApp"),
   asyncHandler(async (req, res) => {
     const { tenantId } = req as AuthedRequest;
     const connection = await disconnectNumber(tenantId, req.params.id);
@@ -51,6 +54,7 @@ connectionRouter.post(
 
 connectionRouter.get(
   "/:id/qr",
+  requireAction("manageWhatsApp"),
   asyncHandler(async (req, res) => {
     const { tenantId } = req as AuthedRequest;
     res.json(await refreshConnectionQr(tenantId, req.params.id));

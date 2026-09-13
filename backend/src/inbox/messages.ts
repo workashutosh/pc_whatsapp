@@ -9,7 +9,8 @@ import { normalizeImageInput } from "../core/media.js";
 import type { MessageMedia, MessagePayload, MessageStatus } from "../core/types.js";
 import { isUniqueViolation, query } from "../db.js";
 import { emitToTenant } from "../realtime/bus.js";
-import type { MessageRecord } from "./types.js";
+import { historyVisibleFrom } from "./policy.js";
+import type { AgentRole, MessageRecord } from "./types.js";
 import {
   findOrCreateConversation,
   getConversation,
@@ -21,16 +22,19 @@ import {
 export async function listMessages(
   tenantId: string,
   conversationId: string,
+  actor?: { id: string; role: AgentRole },
 ): Promise<MessageRecord[]> {
   const conversation = await getConversation(tenantId, conversationId);
   if (!conversation) {
     throw Object.assign(new Error("Conversation not found"), { status: 404 });
   }
+  const cutoff = actor ? historyVisibleFrom(conversation, actor) : null;
   const { rows } = await query<MessageRecord>(
     `SELECT * FROM messages
      WHERE tenant_id = $1 AND conversation_id = $2
+       AND ($3 IS NULL OR created_at >= $3)
      ORDER BY created_at ASC`,
-    [tenantId, conversationId],
+    [tenantId, conversationId, cutoff],
   );
   return rows;
 }
@@ -80,8 +84,13 @@ export async function insertMessage(input: {
   if (!saved) {
     throw new Error("Failed to persist message");
   }
-  emitToTenant(input.tenantId, "message:new", saved);
   const conversation = await getConversation(input.tenantId, input.conversationId);
+  emitToTenant(input.tenantId, "message:new", {
+    ...saved,
+    assigned_agent_id: conversation?.assigned_agent_id ?? null,
+    assigned_at: conversation?.assigned_at ?? null,
+    assignee_can_see_history: conversation?.assignee_can_see_history ?? 1,
+  });
   if (conversation) emitToTenant(input.tenantId, "conversation:updated", conversation);
   return saved;
 }
@@ -108,6 +117,7 @@ export async function sendAgentReply(input: {
   tenantId: string;
   conversationId: string;
   agentId: string;
+  actorRole?: import("./types.js").AgentRole;
   text: string;
   image?: { base64: string; mimetype?: string; filename?: string } | null;
 }): Promise<{ message: MessageRecord; conversation: ConversationView }> {
@@ -125,6 +135,14 @@ export async function sendAgentReply(input: {
 
   const conversation = await getConversation(input.tenantId, input.conversationId);
   if (!conversation) {
+    throw Object.assign(new Error("Conversation not found"), { status: 404 });
+  }
+  if (conversation.status === "closed") {
+    throw Object.assign(new Error("Conversation is stopped. A manager must reopen it before sending."), {
+      status: 409,
+    });
+  }
+  if (input.actorRole === "agent" && conversation.assigned_agent_id !== input.agentId) {
     throw Object.assign(new Error("Conversation not found"), { status: 404 });
   }
 
@@ -242,23 +260,32 @@ export async function addInternalNote(input: {
     ...rows[0],
     tenant_id: input.tenantId,
     conversation_id: input.conversationId,
+    assigned_agent_id: conversation.assigned_agent_id,
+    assigned_at: conversation.assigned_at,
+    assignee_can_see_history: conversation.assignee_can_see_history,
   });
   return rows[0];
 }
 
-export async function listInternalNotes(tenantId: string, conversationId: string) {
+export async function listInternalNotes(
+  tenantId: string,
+  conversationId: string,
+  actor?: { id: string; role: AgentRole },
+) {
   const conversation = await getConversation(tenantId, conversationId);
   if (!conversation) {
     throw Object.assign(new Error("Conversation not found"), { status: 404 });
   }
+  const cutoff = actor ? historyVisibleFrom(conversation, actor) : null;
   const { rows } = await query(
     `SELECT n.*, a.name AS agent_name
      FROM internal_notes n
      JOIN conversations c ON c.id = n.conversation_id
      LEFT JOIN agents a ON a.id = n.agent_id
      WHERE n.conversation_id = $1 AND c.tenant_id = $2
+       AND ($3 IS NULL OR n.created_at >= $3)
      ORDER BY n.created_at ASC`,
-    [conversationId, tenantId],
+    [conversationId, tenantId, cutoff],
   );
   return rows;
 }

@@ -1,9 +1,15 @@
 import type { NextFunction, Request, Response } from "express";
-import { getAgentInTenant } from "../inbox/index.js";
+import { assertIpAllowed, clientIp, getAgentInTenant, getTenant } from "../inbox/index.js";
+import { can, canSeePhone, type PolicyAction } from "../inbox/policy.js";
+import type { Agent, AgentRole } from "../inbox/types.js";
 
 export interface AuthedRequest extends Request {
   tenantId: string;
   agentId: string;
+  role: AgentRole;
+  agent: Agent;
+  agentsCanSeePhone: boolean;
+  seePhone: boolean;
 }
 
 export async function requireAgent(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -18,9 +24,49 @@ export async function requireAgent(req: Request, res: Response, next: NextFuncti
     res.status(401).json({ error: "Unknown agent for this tenant" });
     return;
   }
-  (req as AuthedRequest).tenantId = tenantId;
-  (req as AuthedRequest).agentId = agentId;
+  if (agent.status !== "active") {
+    res.status(403).json({ error: "This account is disabled" });
+    return;
+  }
+  const tenant = await getTenant(tenantId);
+  try {
+    await assertIpAllowed(tenantId, clientIp(req), "use the inbox");
+  } catch (error) {
+    const status = Number((error as { status?: number }).status ?? 403);
+    res.status(status).json({ error: error instanceof Error ? error.message : "This IP is not allowed" });
+    return;
+  }
+  const agentsCanSeePhone = Boolean(tenant?.agents_can_see_phone);
+  const authed = req as AuthedRequest;
+  authed.tenantId = tenantId;
+  authed.agentId = agentId;
+  authed.role = agent.role;
+  authed.agent = agent;
+  authed.agentsCanSeePhone = agentsCanSeePhone;
+  authed.seePhone = canSeePhone(agent.role, agentsCanSeePhone);
   next();
+}
+
+export function requireRole(...roles: AgentRole[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const role = (req as AuthedRequest).role;
+    if (!role || !roles.includes(role)) {
+      res.status(403).json({ error: "You do not have permission for this action" });
+      return;
+    }
+    next();
+  };
+}
+
+export function requireAction(...actions: PolicyAction[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const role = (req as AuthedRequest).role;
+    if (!actions.some((action) => can(role, action))) {
+      res.status(403).json({ error: "You do not have permission for this action" });
+      return;
+    }
+    next();
+  };
 }
 
 export function asyncHandler(

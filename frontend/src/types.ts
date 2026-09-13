@@ -1,9 +1,23 @@
+export type AgentRole = "super_admin" | "manager" | "agent";
+export type AgentStatus = "active" | "disabled";
+
 export type SessionAgent = {
   id: string;
   name: string;
   email: string;
   tenantId: string;
   tenantName: string;
+  role: AgentRole;
+  status: AgentStatus;
+  seePhone: boolean;
+  agentsCanSeePhone: boolean;
+  agentsCanSeeHistory: boolean;
+};
+
+export type IpAllowlist = {
+  allowAllIps: boolean;
+  currentIp: string;
+  ips: { id: string; ip: string; created_at: string }[];
 };
 
 export type Connection = {
@@ -31,6 +45,8 @@ export type Conversation = {
   customer_name: string | null;
   assigned_agent_id: string | null;
   assigned_agent_name: string | null;
+  assigned_at: string | null;
+  assignee_can_see_history: boolean | number | null;
   locked_by_agent_id: string | null;
   locked_by_agent_name: string | null;
   locked_at: string | null;
@@ -78,4 +94,22 @@ export type Agent = {
   tenant_id: string;
   name: string;
   email: string;
+  role: AgentRole;
+  status: AgentStatus;
 };
+
+export type ChatFilters = {
+  q: string;
+  status: "all" | "open" | "closed";
+  assignedAgentId: string;
+};
+
+export function canManage(role: AgentRole): boolean {
+  return role === "super_admin" || role === "manager";
+}
+
+export function roleLabel(role: AgentRole): string {
+  if (role === "super_admin") return "Super admin";
+  if (role === "manager") return "Manager";
+  return "Agent";
+}

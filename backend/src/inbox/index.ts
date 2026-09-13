@@ -3,16 +3,26 @@
  * Agents, assignment, locks, notes, and chat history live here.
  * Call core for send/receive/login — never the other way around.
  */
-export { getAgentByEmail, getAgentInTenant, getTenant, listAgents } from "./agents.js";
+export {
+  createAgent,
+  getAgentByEmail,
+  getAgentInTenant,
+  getTenant,
+  listAgents,
+  updateAgent,
+  updateTenantSettings,
+} from "./agents.js";
 export {
   assignConversation,
   claimConversation,
   findOrCreateConversation,
   getConversation,
+  getConversationForActor,
   listConversations,
   lockConversation,
   setConversationStatus,
   unlockConversation,
+  type ConversationListQuery,
   type ConversationView,
 } from "./conversations.js";
 export {
@@ -24,5 +34,16 @@ export {
   simulateInbound,
   updateMessageStatus,
 } from "./messages.js";
+export { can, canSeeHistoryItem, canSeePhone, historyVisibleFrom, maskPhone, redactConversation } from "./policy.js";
+export {
+  addAllowedIp,
+  assertIpAllowed,
+  clientIp,
+  isIpAllowed,
+  listAllowedIps,
+  removeAllowedIp,
+  setAllowAllIps,
+  tenantAllowsAllIps,
+} from "./ipAllowlist.js";
 export { handleProviderWebhook } from "./webhook.js";
-export type { Agent, Conversation, MessageRecord, Tenant } from "./types.js";
+export type { Agent, AgentRole, Conversation, MessageRecord, Tenant } from "./types.js";

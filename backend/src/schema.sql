@@ -5,6 +5,9 @@ CREATE TABLE IF NOT EXISTS tenants (
   id TEXT PRIMARY KEY DEFAULT (uuid()),
   name TEXT NOT NULL,
   assignment_mode TEXT NOT NULL DEFAULT 'manual',
+  agents_can_see_phone INTEGER NOT NULL DEFAULT 0,
+  allow_all_ips INTEGER NOT NULL DEFAULT 1,
+  agents_can_see_history INTEGER NOT NULL DEFAULT 1,
   created_at TEXT DEFAULT (now_iso())
 );
 
@@ -13,7 +16,19 @@ CREATE TABLE IF NOT EXISTS agents (
   tenant_id TEXT NOT NULL REFERENCES tenants(id),
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
+  role TEXT NOT NULL DEFAULT 'agent',
+  password_hash TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  disabled_at TEXT,
   created_at TEXT DEFAULT (now_iso())
+);
+
+CREATE TABLE IF NOT EXISTS tenant_allowed_ips (
+  id TEXT PRIMARY KEY DEFAULT (uuid()),
+  tenant_id TEXT NOT NULL REFERENCES tenants(id),
+  ip TEXT NOT NULL,
+  created_at TEXT DEFAULT (now_iso()),
+  UNIQUE (tenant_id, ip)
 );
 
 CREATE TABLE IF NOT EXISTS whatsapp_connections (
@@ -38,6 +53,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   customer_jid TEXT,
   customer_name TEXT,
   assigned_agent_id TEXT REFERENCES agents(id),
+  assigned_at TEXT,
+  assignee_can_see_history INTEGER,
   locked_by_agent_id TEXT REFERENCES agents(id),
   locked_at TEXT,
   status TEXT DEFAULT 'open',

@@ -103,10 +103,30 @@ export async function migrateAndSeed(): Promise<void> {
   const here = dirname(fileURLToPath(import.meta.url));
   const schema = readFileSync(join(here, "schema.sql"), "utf8");
   db.exec(schema);
-  try {
-    db.exec("ALTER TABLE conversations ADD COLUMN customer_jid TEXT");
-  } catch {
-    // already present on existing databases
+  for (const statement of [
+    "ALTER TABLE conversations ADD COLUMN customer_jid TEXT",
+    "ALTER TABLE tenants ADD COLUMN agents_can_see_phone INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT 'agent'",
+    "ALTER TABLE agents ADD COLUMN password_hash TEXT",
+    "ALTER TABLE agents ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+    "ALTER TABLE agents ADD COLUMN disabled_at TEXT",
+    "ALTER TABLE tenants ADD COLUMN allow_all_ips INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE tenants ADD COLUMN agents_can_see_history INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE conversations ADD COLUMN assigned_at TEXT",
+    "ALTER TABLE conversations ADD COLUMN assignee_can_see_history INTEGER",
+    `CREATE TABLE IF NOT EXISTS tenant_allowed_ips (
+      id TEXT PRIMARY KEY DEFAULT (uuid()),
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      ip TEXT NOT NULL,
+      created_at TEXT DEFAULT (now_iso()),
+      UNIQUE (tenant_id, ip)
+    )`,
+  ]) {
+    try {
+      db.exec(statement);
+    } catch {
+      // already present on existing databases
+    }
   }
 
   if (!config.demoMode) {
@@ -118,24 +138,50 @@ export async function migrateAndSeed(): Promise<void> {
   }
 
   const { rows } = await query<{ count: string }>("SELECT CAST(COUNT(*) AS TEXT) AS count FROM tenants");
-  if (Number(rows[0]?.count ?? 0) > 0) {
-    return;
+  if (Number(rows[0]?.count ?? 0) === 0) {
+    await query(
+      `INSERT INTO tenants (name, assignment_mode, agents_can_see_phone)
+       VALUES ($1, $2, 0)`,
+      ["Acme Support", config.assignmentMode],
+    );
   }
 
-  await query(
-    `INSERT INTO tenants (name, assignment_mode)
-     VALUES ($1, $2)`,
-    ["Acme Support", config.assignmentMode],
-  );
   const tenant = await query<{ id: string }>("SELECT id FROM tenants WHERE name = $1", ["Acme Support"]);
-  const tenantId = tenant.rows[0].id;
-  await query(
-    `INSERT INTO agents (tenant_id, name, email)
-     VALUES
-       ($1, 'Alice Sharma', 'alice@acme.test'),
-       ($1, 'Bob Fernandes', 'bob@acme.test')`,
-    [tenantId],
-  );
+  const tenantId = tenant.rows[0]?.id;
+  if (tenantId) {
+    await ensureDemoAccounts(tenantId);
+  }
+}
 
-  console.log("Seeded demo tenant Acme Support (alice@acme.test / bob@acme.test)");
+async function ensureDemoAccounts(tenantId: string): Promise<void> {
+  const { hashPassword } = await import("./inbox/password.js");
+  const accounts = [
+    { name: "Alice Sharma", email: "alice@acme.test", role: "super_admin", password: "AcmeAdmin!1" },
+    { name: "Bob Fernandes", email: "bob@acme.test", role: "manager", password: "AcmeManager!1" },
+    { name: "Riya Kapoor", email: "riya@acme.test", role: "agent", password: "AcmeAgent!1" },
+  ];
+  for (const account of accounts) {
+    const existing = await query<{ id: string; password_hash: string | null }>(
+      "SELECT id, password_hash FROM agents WHERE lower(email) = lower($1)",
+      [account.email],
+    );
+    const passwordHash = await hashPassword(account.password);
+    if (existing.rows[0]) {
+      await query(
+        `UPDATE agents
+         SET role = $2, status = 'active', disabled_at = NULL, password_hash = $3
+         WHERE id = $1`,
+        [existing.rows[0].id, account.role, passwordHash],
+      );
+    } else {
+      await query(
+        `INSERT INTO agents (tenant_id, name, email, role, password_hash, status)
+         VALUES ($1, $2, $3, $4, $5, 'active')`,
+        [tenantId, account.name, account.email, account.role, passwordHash],
+      );
+    }
+  }
+  console.log(
+    "Demo accounts: alice@acme.test / AcmeAdmin!1 · bob@acme.test / AcmeManager!1 · riya@acme.test / AcmeAgent!1",
+  );
 }

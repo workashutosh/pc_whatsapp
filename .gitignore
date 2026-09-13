@@ -8,6 +8,7 @@ coverage/
 backend/dist/
 frontend/dist/
 *.tsbuildinfo
+.logs/
 backend/data/
 *.sqlite
 .cursor/*

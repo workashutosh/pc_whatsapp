@@ -1,11 +1,14 @@
 import type { SessionAgent } from "../types";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:3001";
+const configuredApiUrl = import.meta.env.VITE_API_URL;
+const API_URL = configuredApiUrl ?? (import.meta.env.DEV ? "" : "http://127.0.0.1:3001");
 
 let session: SessionAgent | null = null;
 
 export function apiUrl(): string {
-  return API_URL;
+  if (API_URL) return API_URL;
+  if (typeof window !== "undefined") return window.location.origin;
+  return "http://127.0.0.1:3001";
 }
 
 export function setSession(next: SessionAgent | null): void {
@@ -18,7 +21,12 @@ export function loadSession(): SessionAgent | null {
   if (session) return session;
   const raw = localStorage.getItem("inbox.session");
   if (!raw) return null;
-  session = JSON.parse(raw) as SessionAgent;
+  const parsed = JSON.parse(raw) as SessionAgent;
+  if (!parsed.role) {
+    localStorage.removeItem("inbox.session");
+    return null;
+  }
+  session = parsed;
   return session;
 }
 
@@ -33,7 +41,7 @@ function headers(): HeadersInit {
 }
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetch(`${apiUrl()}${path}`, {
     ...init,
     headers: { ...headers(), ...(init?.headers ?? {}) },
   });

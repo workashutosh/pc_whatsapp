@@ -9,6 +9,8 @@ import { connectionRouter } from "./http/connectionRoutes.js";
 import { conversationRouter } from "./http/conversationRoutes.js";
 import { httpError } from "./http/middleware.js";
 import { webhookRouter } from "./http/webhookRoutes.js";
+import { canSeePhone } from "./inbox/policy.js";
+import { clientIp, getAgentInTenant, getTenant, isIpAllowed } from "./inbox/index.js";
 import { setIo, tenantRoom } from "./realtime/bus.js";
 
 /** HTTP glue: /webhook and /api/connections are the core channel; /api/auth and /api/conversations are inbox. */
@@ -18,23 +20,48 @@ async function main(): Promise<void> {
 
   const app = express();
   const server = createServer(app);
+  const corsOrigins = [
+    config.corsOrigin,
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+  ].filter((origin, index, all) => all.indexOf(origin) === index);
   const io = new Server(server, {
-    cors: { origin: config.corsOrigin, credentials: true },
+    cors: { origin: corsOrigins, credentials: true },
     maxHttpBufferSize: 15 * 1024 * 1024,
   });
   setIo(io);
 
-  io.on("connection", (socket) => {
+  io.on("connection", async (socket) => {
     const tenantId = String(socket.handshake.auth.tenantId ?? "");
     const agentId = String(socket.handshake.auth.agentId ?? "");
     if (!tenantId || !agentId) {
       socket.disconnect(true);
       return;
     }
+    const agent = await getAgentInTenant(agentId, tenantId);
+    if (!agent || agent.status !== "active") {
+      socket.disconnect(true);
+      return;
+    }
+    const tenant = await getTenant(tenantId);
+    const requestLike = {
+      headers: socket.handshake.headers,
+      socket: { remoteAddress: socket.handshake.address },
+    };
+    if (!(await isIpAllowed(tenantId, clientIp(requestLike)))) {
+      socket.disconnect(true);
+      return;
+    }
+    socket.data.auth = {
+      tenantId,
+      agentId,
+      role: agent.role,
+      seePhone: canSeePhone(agent.role, Boolean(tenant?.agents_can_see_phone)),
+    };
     socket.join(tenantRoom(tenantId));
   });
 
-  app.use(cors({ origin: config.corsOrigin, credentials: true }));
+  app.use(cors({ origin: corsOrigins, credentials: true }));
   app.use(express.json({ limit: "12mb" }));
 
   app.get("/health", (_req, res) => {
