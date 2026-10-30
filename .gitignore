@@ -13,3 +13,4 @@ backend/data/
 *.sqlite
 .cursor/*
 !.cursor/rules/
+.evolution/

@@ -60,12 +60,46 @@ if ! have_cmd npm || ! have_cmd curl; then
   exit 1
 fi
 
-if have_cmd docker; then
-  echo "Starting Evolution (postgres, redis, evolution-api)..."
-  docker compose up -d postgres redis evolution-api
+start_evolution() {
+  local evo_dir="$ROOT/.evolution"
+  local log="$LOG_DIR/evolution.log"
+
+  if http_ok "http://127.0.0.1:18080"; then
+    echo "Evolution API is already running"
+    return 0
+  fi
+
+  if ! pg_isready -q 2>/dev/null; then
+    if have_cmd brew; then
+      echo "Starting PostgreSQL..."
+      brew services start postgresql@14 >/dev/null 2>&1 || brew services start postgresql >/dev/null 2>&1 || true
+      for _ in $(seq 1 15); do pg_isready -q 2>/dev/null && break; sleep 1; done
+    fi
+  fi
+  if ! pg_isready -q 2>/dev/null; then
+    echo "PostgreSQL is not running — skipping Evolution. The inbox will start without a live WhatsApp line."
+    return 0
+  fi
+
+  if [[ ! -f "$evo_dir/dist/main.js" ]]; then
+    echo "Evolution API is not installed yet. Installing (one time, a few minutes)..."
+    "$ROOT/infra/evolution/setup.sh"
+  fi
+
+  echo "Starting Evolution API..."
+  (
+    cd "$evo_dir"
+    node dist/main >>"$log" 2>&1 &
+    echo $! >"$LOG_DIR/evolution.pid"
+  )
   wait_http "http://127.0.0.1:18080" "Evolution API" 60 || true
+}
+
+if have_cmd pg_isready; then
+  start_evolution
 else
-  echo "Docker not found — skipping Evolution. The inbox will start without a live WhatsApp line."
+  echo "PostgreSQL not found — skipping Evolution. The inbox will start without a live WhatsApp line."
+  echo "Install it with: brew install postgresql@14 && brew services start postgresql@14"
 fi
 
 start_npm backend "$ROOT/backend" "http://127.0.0.1:3001/health"
