@@ -11,6 +11,9 @@
   --in: #222222;
   --out: #1d3a2c;
   --warn: #b0893a;
+  --scrollbar: #3a3a3a;
+  --scrollbar-hover: #555555;
+  color-scheme: dark;
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -18,6 +21,14 @@
 }
 
 * { box-sizing: border-box; }
+
+/* Thin dark scrollbars for every scroll area (list, thread, details, pages). */
+* { scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); background-clip: padding-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
 html, body, #root { height: 100%; margin: 0; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
@@ -141,6 +152,17 @@ input, textarea, select {
   font-size: 14px;
 }
 .meta { color: var(--muted); font-size: 12px; }
+.inbox-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.inbox-title .ghost { padding: 3px 8px; font-size: 12px; }
+.inbox-title .ghost:disabled { opacity: 0.45; cursor: not-allowed; }
+.new-chat {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.new-chat textarea { resize: vertical; }
 .toolbar {
   display: grid;
   gap: 6px;

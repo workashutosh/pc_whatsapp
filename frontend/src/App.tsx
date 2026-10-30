@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Login } from "./inbox/Login";
 import { Shell } from "./inbox/Shell";
-import { loadSession, setSession } from "./api";
+import { api, loadSession, setSession } from "./api";
 import type { SessionAgent } from "./types";
 
 export function App() {
@@ -12,6 +12,7 @@ export function App() {
       agent={agent}
       onAgent={setAgent}
       onLogout={() => {
+        void api.logout().catch(() => undefined);
         setSession(null);
         setAgent(null);
       }}

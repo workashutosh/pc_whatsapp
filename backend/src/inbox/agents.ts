@@ -1,13 +1,8 @@
 import { query } from "../db.js";
 import { hashPassword } from "./password.js";
 import { canManageTarget, canSetRole, publicAgent } from "./policy.js";
+import { revokeAgentSessions } from "./sessions.js";
 import type { Agent, AgentRole, AgentStatus, Tenant } from "./types.js";
-
-const DEMO_PASSWORDS: Record<string, string> = {
-  "alice@acme.test": "AcmeAdmin!1",
-  "bob@acme.test": "AcmeManager!1",
-  "riya@acme.test": "AcmeAgent!1",
-};
 
 export async function getTenant(tenantId: string): Promise<Tenant | null> {
   const { rows } = await query<Tenant>("SELECT * FROM tenants WHERE id = $1", [tenantId]);
@@ -147,12 +142,12 @@ export async function updateAgent(input: {
   const role = input.role ?? target.role;
   const status = input.status ?? target.status;
   const disabledAt = status === "disabled" ? target.disabled_at ?? new Date().toISOString() : null;
-  const passwordHash = input.password
-    ? await hashPassword(input.password)
-    : target.password_hash;
   if (input.password && input.password.length < 8) {
     throw Object.assign(new Error("Password must be at least 8 characters"), { status: 400 });
   }
+  const passwordHash = input.password
+    ? await hashPassword(input.password)
+    : target.password_hash;
 
   const { rows } = await query<Agent>(
     `UPDATE agents
@@ -161,6 +156,10 @@ export async function updateAgent(input: {
      RETURNING *`,
     [input.agentId, input.tenantId, name, email, role, status, disabledAt, passwordHash],
   );
+  // A password reset, role change, or disable should not leave old sessions running with stale access.
+  if (input.password || role !== target.role || status !== "active") {
+    await revokeAgentSessions(input.agentId);
+  }
   return publicAgent(rows[0]);
 }
 
@@ -181,5 +180,3 @@ async function assertCanDisable(tenantId: string, target: Agent): Promise<void> 
     throw Object.assign(new Error("Cannot disable the last super admin"), { status: 409 });
   }
 }
-
-export { DEMO_PASSWORDS };

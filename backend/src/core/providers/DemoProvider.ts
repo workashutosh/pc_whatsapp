@@ -1,6 +1,7 @@
 import type {
   ConnectNumberResult,
   NormalizedIncomingEvent,
+  NumberLookupResult,
   QrPayload,
   SendImageInput,
   SendMessageInput,
@@ -41,6 +42,11 @@ export class DemoProvider implements WhatsAppProvider {
 
   async disconnectNumber(_connection: WhatsAppConnection): Promise<void> {
     return;
+  }
+
+  async lookupNumber(_connection: WhatsAppConnection, phone: string): Promise<NumberLookupResult> {
+    const digits = phone.replace(/\D/g, "");
+    return { exists: true, jid: `${digits}@s.whatsapp.net`, phone: digits, name: null };
   }
 
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {

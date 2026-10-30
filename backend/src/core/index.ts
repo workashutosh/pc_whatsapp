@@ -3,7 +3,7 @@
  * Login (QR), send, receive, and connection state live here.
  * Do not import inbox/agents/assignment from this folder.
  */
-export { parseIncomingWhatsApp, sendWhatsAppImage, sendWhatsAppText } from "./channel.js";
+export { lookupWhatsAppNumber, parseIncomingWhatsApp, sendWhatsAppImage, sendWhatsAppText } from "./channel.js";
 export {
   connectNumber,
   disconnectNumber,
@@ -14,6 +14,7 @@ export {
   markConnectionState,
   refreshConnectionQr,
   refreshRemoteStatus,
+  resyncProviderWebhooks,
   switchNumber,
 } from "./connections.js";
 export {
@@ -32,6 +33,7 @@ export type {
   MessagePayload,
   MessageStatus,
   NormalizedIncomingEvent,
+  NumberLookupResult,
   ProviderKind,
   QrPayload,
   SendImageInput,

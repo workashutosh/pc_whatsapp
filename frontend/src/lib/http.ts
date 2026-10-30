@@ -21,8 +21,15 @@ export function loadSession(): SessionAgent | null {
   if (session) return session;
   const raw = localStorage.getItem("inbox.session");
   if (!raw) return null;
-  const parsed = JSON.parse(raw) as SessionAgent;
-  if (!parsed.role) {
+  let parsed: SessionAgent;
+  try {
+    parsed = JSON.parse(raw) as SessionAgent;
+  } catch {
+    localStorage.removeItem("inbox.session");
+    return null;
+  }
+  // Sessions saved before token auth existed cannot be used; force a fresh sign-in.
+  if (!parsed.role || !parsed.token) {
     localStorage.removeItem("inbox.session");
     return null;
   }
@@ -30,21 +37,24 @@ export function loadSession(): SessionAgent | null {
   return session;
 }
 
-function headers(): HeadersInit {
+export function authHeaders(): Record<string, string> {
   const current = loadSession();
   return {
     "Content-Type": "application/json",
-    ...(current
-      ? { "X-Tenant-Id": current.tenantId, "X-Agent-Id": current.id }
-      : {}),
+    ...(current ? { Authorization: `Bearer ${current.token}` } : {}),
   };
 }
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiUrl()}${path}`, {
     ...init,
-    headers: { ...headers(), ...(init?.headers ?? {}) },
+    headers: { ...authHeaders(), ...(init?.headers ?? {}) },
   });
+  if (response.status === 401 && loadSession()) {
+    // Token expired or was revoked (password reset, role change, disabled): drop back to the login screen.
+    setSession(null);
+    window.location.reload();
+  }
   const contentType = response.headers.get("content-type") ?? "";
   const body = contentType.includes("application/json")
     ? await response.json().catch(() => ({}))

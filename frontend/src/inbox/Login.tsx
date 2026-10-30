@@ -29,7 +29,8 @@ export function Login({ onLogin }: { onLogin: (agent: SessionAgent) => void }) {
     const password = String(data.get("password") ?? "").trim();
     setError("");
     try {
-      const { agent } = await api.login(email, password);
+      const { token, agent: profile } = await api.login(email, password);
+      const agent = { ...profile, token };
       setSession(agent);
       onLogin(agent);
     } catch (err) {

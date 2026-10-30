@@ -32,6 +32,7 @@ export {
   listMessages,
   sendAgentReply,
   simulateInbound,
+  startConversation,
   updateMessageStatus,
 } from "./messages.js";
 export { can, canSeeHistoryItem, canSeePhone, historyVisibleFrom, maskPhone, redactConversation } from "./policy.js";
@@ -46,4 +47,12 @@ export {
   tenantAllowsAllIps,
 } from "./ipAllowlist.js";
 export { handleProviderWebhook } from "./webhook.js";
+export { filterRealtimePayload } from "./realtime.js";
+export {
+  createSession,
+  deleteSession,
+  getSessionAgent,
+  purgeExpiredSessions,
+  revokeAgentSessions,
+} from "./sessions.js";
 export type { Agent, AgentRole, Conversation, MessageRecord, Tenant } from "./types.js";

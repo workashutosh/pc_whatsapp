@@ -10,6 +10,7 @@ import {
   sendAgentReply,
   setConversationStatus,
   simulateInbound,
+  startConversation,
   unlockConversation,
 } from "../inbox/index.js";
 import { redactConversation } from "../inbox/policy.js";
@@ -34,6 +35,27 @@ conversationRouter.get(
     );
     res.json({
       conversations: conversations.map((item) => redactConversation(item, seePhone, { id: agentId, role })),
+    });
+  }),
+);
+
+conversationRouter.post(
+  "/",
+  requireAction("startConversation"),
+  asyncHandler(async (req, res) => {
+    const { tenantId, agentId, role, seePhone } = req as AuthedRequest;
+    const result = await startConversation({
+      tenantId,
+      agentId,
+      actorRole: role,
+      phone: String(req.body?.phone ?? ""),
+      name: req.body?.name ? String(req.body.name) : null,
+      text: String(req.body?.text ?? ""),
+      image: parseImageBody(req.body?.image),
+    });
+    res.status(201).json({
+      message: result.message,
+      conversation: redactConversation(result.conversation, seePhone, { id: agentId, role }),
     });
   }),
 );

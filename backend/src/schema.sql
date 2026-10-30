@@ -23,6 +23,16 @@ CREATE TABLE IF NOT EXISTS agents (
   created_at TEXT DEFAULT (now_iso())
 );
 
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  token_hash TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id),
+  expires_at TEXT NOT NULL,
+  created_at TEXT DEFAULT (now_iso())
+);
+
+CREATE INDEX IF NOT EXISTS agent_sessions_agent_idx ON agent_sessions (agent_id);
+
 CREATE TABLE IF NOT EXISTS tenant_allowed_ips (
   id TEXT PRIMARY KEY DEFAULT (uuid()),
   tenant_id TEXT NOT NULL REFERENCES tenants(id),

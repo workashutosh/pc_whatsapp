@@ -2,6 +2,7 @@ import {
   evolutionRecipient,
   getLiveConnection,
   jidFromStoredPayload,
+  lookupWhatsAppNumber,
   sendWhatsAppImage,
   sendWhatsAppText,
 } from "../core/index.js";
@@ -15,6 +16,7 @@ import {
   findOrCreateConversation,
   getConversation,
   lockConversation,
+  setConversationStatus,
   touchConversation,
   type ConversationView,
 } from "./conversations.js";
@@ -213,6 +215,59 @@ export async function sendAgentReply(input: {
     message,
     conversation: (await getConversation(input.tenantId, conversation.id))!,
   };
+}
+
+/**
+ * Message a number that has never written to us. Checks the number is on WhatsApp first,
+ * then reuses the normal chat + send path so the new chat behaves like any other.
+ */
+export async function startConversation(input: {
+  tenantId: string;
+  agentId: string;
+  actorRole: AgentRole;
+  phone: string;
+  name?: string | null;
+  text: string;
+  image?: { base64: string; mimetype?: string; filename?: string } | null;
+}): Promise<{ message: MessageRecord; conversation: ConversationView }> {
+  const digits = input.phone.replace(/\D/g, "");
+  if (digits.length < 8 || digits.length > 15) {
+    throw Object.assign(new Error("Enter the full number with country code, e.g. 919800011122"), { status: 400 });
+  }
+  if (!input.text.trim() && !input.image?.base64) {
+    throw Object.assign(new Error("Write a first message"), { status: 400 });
+  }
+
+  const live = await getLiveConnection(input.tenantId);
+  if (!live || live.status !== "connected") {
+    throw Object.assign(new Error("Tenant WhatsApp number is not connected"), { status: 409 });
+  }
+
+  const lookup = await lookupWhatsAppNumber(live, digits);
+  if (!lookup.exists || !lookup.jid) {
+    throw Object.assign(new Error(`+${digits} is not on WhatsApp`), { status: 404 });
+  }
+
+  const conversation = await findOrCreateConversation({
+    tenantId: input.tenantId,
+    connectionId: live.id,
+    customerPhone: lookup.phone,
+    customerJid: lookup.jid,
+    customerName: input.name?.trim() || lookup.name,
+  });
+  // Messaging someone again after their chat was stopped is an explicit restart.
+  if (conversation.status === "closed") {
+    await setConversationStatus(input.tenantId, conversation.id, "open");
+  }
+
+  return sendAgentReply({
+    tenantId: input.tenantId,
+    conversationId: conversation.id,
+    agentId: input.agentId,
+    actorRole: input.actorRole,
+    text: input.text,
+    image: input.image,
+  });
 }
 
 async function resolveSendRecipient(conversation: ConversationView): Promise<string> {

@@ -1,7 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { api } from "../api";
-import { apiUrl } from "../lib/http";
+import { apiUrl, authHeaders } from "../lib/http";
 import type { Agent, ChatFilters, Connection, Conversation, Message, Note, SessionAgent } from "../types";
 import { canManage } from "../types";
 
@@ -34,10 +34,9 @@ export function InboxPage({
   const [noteDraft, setNoteDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [canSeeHistory, setCanSeeHistory] = useState(agent.agentsCanSeeHistory !== false);
+  const [newChatOpen, setNewChatOpen] = useState(false);
   const threadRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const agentRef = useRef(agent);
-  agentRef.current = agent;
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
 
@@ -96,8 +95,7 @@ export function InboxPage({
 
   useEffect(() => {
     const socket = io(api.url, {
-      auth: { tenantId: agent.tenantId, agentId: agent.id },
-      maxHttpBufferSize: 15 * 1024 * 1024,
+      auth: { token: agent.token },
     });
     socket.on("conversation:updated", (conversation: Conversation) => {
       setConversations((current) => {
@@ -139,14 +137,9 @@ export function InboxPage({
     const conversationId = selectedId;
     return () => {
       if (!conversationId) return;
-      const current = agentRef.current;
       void fetch(`${apiUrl()}/api/conversations/${conversationId}/unlock`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Tenant-Id": current.tenantId,
-          "X-Agent-Id": current.id,
-        },
+        headers: authHeaders(),
       }).catch(() => undefined);
     };
   }, [selectedId]);
@@ -219,7 +212,20 @@ export function InboxPage({
     <>
       <section className="inbox">
         <div className="inbox-head">
-          <h2>Inbox</h2>
+          <div className="inbox-title">
+            <h2>Inbox</h2>
+            {manager ? (
+              <button
+                className="ghost"
+                type="button"
+                onClick={() => setNewChatOpen((open) => !open)}
+                disabled={live?.status !== "connected"}
+                title={live?.status === "connected" ? "Message a new number" : "Connect a WhatsApp number first"}
+              >
+                {newChatOpen ? "Cancel" : "+ New chat"}
+              </button>
+            ) : null}
+          </div>
           <div className="meta">{live?.phone_number ?? live?.status ?? "No number"}</div>
           <div className="toolbar">
             <input
@@ -250,6 +256,16 @@ export function InboxPage({
             ) : null}
           </div>
         </div>
+        {newChatOpen ? (
+          <NewChatForm
+            onError={onError}
+            onStarted={(conversation) => {
+              setNewChatOpen(false);
+              setConversations((current) => upsert(current, conversation));
+              void openConversation(conversation.id);
+            }}
+          />
+        ) : null}
         <div className="list">
           {conversations.map((conversation) => (
             <button
@@ -441,6 +457,55 @@ export function InboxPage({
         </div>
       </aside>
     </>
+  );
+}
+
+function NewChatForm({
+  onStarted,
+  onError,
+}: {
+  onStarted: (conversation: Conversation) => void;
+  onError: (value: string) => void;
+}) {
+  const [phone, setPhone] = useState("");
+  const [name, setName] = useState("");
+  const [text, setText] = useState("");
+  const [starting, setStarting] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (starting) return;
+    setStarting(true);
+    onError("");
+    try {
+      const { conversation } = await api.startConversation({
+        phone,
+        text,
+        name: name.trim() || undefined,
+      });
+      onStarted(conversation);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Could not start the chat");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  return (
+    <form className="new-chat" onSubmit={submit}>
+      <input
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+        placeholder="Number with country code, e.g. 919800011122"
+        inputMode="tel"
+        autoFocus
+      />
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional)" />
+      <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="First message" rows={3} />
+      <button className="primary" type="submit" disabled={starting || !phone.trim() || !text.trim()}>
+        {starting ? "Sending..." : "Send"}
+      </button>
+    </form>
   );
 }
 

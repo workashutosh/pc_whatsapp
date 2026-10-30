@@ -61,6 +61,15 @@ export interface SendMessageInput {
   text: string;
 }
 
+export interface NumberLookupResult {
+  exists: boolean;
+  /** Chat id WhatsApp uses for this number, e.g. 919800011122@s.whatsapp.net. */
+  jid: string | null;
+  phone: string;
+  /** Name WhatsApp reports for the number, when it has one. */
+  name: string | null;
+}
+
 export interface SendMessageResult {
   waMessageId: string | null;
   raw: unknown;
@@ -119,6 +128,9 @@ export interface WhatsAppProvider {
   sendMessage(input: SendMessageInput): Promise<SendMessageResult>;
   sendImage(input: SendImageInput): Promise<SendMessageResult>;
   resolveIncomingMedia?(event: NormalizedIncomingMessage): Promise<MessageMedia | null>;
+  lookupNumber(connection: WhatsAppConnection, phone: string): Promise<NumberLookupResult>;
+  /** Re-register the inbound webhook (URL + secret) for an existing instance. */
+  syncWebhook?(connection: WhatsAppConnection): Promise<void>;
   getQr(connection: WhatsAppConnection): Promise<QrPayload | null>;
   getRemoteStatus(connection: WhatsAppConnection): Promise<{
     state: string;

@@ -1,6 +1,8 @@
 import { getProvider } from "./providers/registry.js";
 import type {
   NormalizedIncomingEvent,
+  NumberLookupResult,
+  WhatsAppConnection,
   SendImageInput,
   SendMessageInput,
   SendMessageResult,
@@ -14,6 +16,14 @@ export async function sendWhatsAppText(input: SendMessageInput): Promise<SendMes
 /** Send a WhatsApp image through the live provider. Inbox must not call providers directly. */
 export async function sendWhatsAppImage(input: SendImageInput): Promise<SendMessageResult> {
   return getProvider(input.connection).sendImage(input);
+}
+
+/** Ask WhatsApp whether a phone number has an account, and get the chat id to send to. */
+export async function lookupWhatsAppNumber(
+  connection: WhatsAppConnection,
+  phone: string,
+): Promise<NumberLookupResult> {
+  return getProvider(connection).lookupNumber(connection, phone);
 }
 
 const FULL_IMAGE_CHARS = 12_000;

@@ -54,10 +54,8 @@ export async function connectNumber(
     });
   }
 
-  const providerKind = resolveProviderKind(requestedProvider);
-  const provider = getProvider(providerKind);
   const instanceName = instanceNameForTenant(tenantId);
-  const result = await provider.connectNumber(tenantId, instanceName);
+  const { providerKind, result } = await connectWithFallback(requestedProvider, tenantId, instanceName);
   const status = result.connection.status || "pending";
   const phoneNumber = result.connection.phone_number ?? null;
   const connectedAt = status === "connected" ? new Date().toISOString() : null;
@@ -80,8 +78,6 @@ export async function switchNumber(
   requestedProvider: ProviderKind = "evolution",
 ): Promise<ConnectNumberResult> {
   const live = await getLiveConnection(tenantId);
-  const providerKind = resolveProviderKind(requestedProvider);
-  const provider = getProvider(providerKind);
   const instanceName = instanceNameForTenant(tenantId);
 
   if (live) {
@@ -96,7 +92,7 @@ export async function switchNumber(
     );
   }
 
-  const result = await provider.connectNumber(tenantId, instanceName);
+  const { providerKind, result } = await connectWithFallback(requestedProvider, tenantId, instanceName);
   const status = result.connection.status || "pending";
   const phoneNumber = result.connection.phone_number ?? null;
   const connectedAt = status === "connected" ? new Date().toISOString() : null;
@@ -183,4 +179,42 @@ export async function refreshRemoteStatus(tenantId: string, connectionId: string
     phoneNumber: remote.phoneNumber,
   });
   return { connection: updated ?? connection, remote };
+}
+
+/** Push the current webhook URL/secret to every live instance, so config changes apply without re-scanning a QR. */
+export async function resyncProviderWebhooks(): Promise<void> {
+  const { rows } = await query<WhatsAppConnection>(
+    "SELECT * FROM whatsapp_connections WHERE status IN ('pending', 'connected')",
+  );
+  for (const connection of rows) {
+    const provider = getProvider(connection);
+    if (!provider.syncWebhook) continue;
+    await provider.syncWebhook(connection).catch((error) => {
+      console.warn(`Webhook resync failed for ${connection.instance_name}`, error instanceof Error ? error.message : error);
+    });
+  }
+}
+
+async function connectWithFallback(
+  requestedProvider: ProviderKind,
+  tenantId: string,
+  instanceName: string,
+): Promise<{ providerKind: ProviderKind; result: ConnectNumberResult }> {
+  const providerKind = resolveProviderKind(requestedProvider);
+  try {
+    return {
+      providerKind,
+      result: await getProvider(providerKind).connectNumber(tenantId, instanceName),
+    };
+  } catch (error) {
+    const status = Number((error as { status?: number }).status ?? 0);
+    if (providerKind === "evolution" && status === 503) {
+      console.warn("Evolution API is not running; using demo QR instead");
+      return {
+        providerKind: "demo",
+        result: await getProvider("demo").connectNumber(tenantId, instanceName),
+      };
+    }
+    throw error;
+  }
 }

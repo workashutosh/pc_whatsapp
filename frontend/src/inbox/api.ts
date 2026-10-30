@@ -3,10 +3,11 @@ import { request } from "../lib/http";
 
 export const inboxApi = {
   login: (email: string, password: string) =>
-    request<{ agent: SessionAgent }>("/api/auth/login", {
+    request<{ token: string; agent: Omit<SessionAgent, "token"> }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     }),
+  logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   me: () =>
     request<{
       agent: SessionAgent;
@@ -85,6 +86,11 @@ export const inboxApi = {
     request<{ note: Note }>(`/api/conversations/${id}/notes`, {
       method: "POST",
       body: JSON.stringify({ note }),
+    }),
+  startConversation: (input: { phone: string; text: string; name?: string }) =>
+    request<{ conversation: Conversation; message: Message }>("/api/conversations", {
+      method: "POST",
+      body: JSON.stringify(input),
     }),
   simulate: (input: { phone: string; text: string; name?: string }) =>
     request<{ conversation: Conversation; message: Message }>("/api/conversations/simulate", {

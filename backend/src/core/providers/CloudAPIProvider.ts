@@ -1,6 +1,7 @@
 import type {
   ConnectNumberResult,
   NormalizedIncomingEvent,
+  NumberLookupResult,
   QrPayload,
   SendImageInput,
   SendMessageInput,
@@ -21,6 +22,10 @@ export class CloudAPIProvider implements WhatsAppProvider {
   }
 
   async disconnectNumber(): Promise<void> {
+    this.unsupported();
+  }
+
+  async lookupNumber(_connection: WhatsAppConnection, _phone: string): Promise<NumberLookupResult> {
     this.unsupported();
   }
 

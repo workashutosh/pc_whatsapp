@@ -2,6 +2,8 @@ export type AgentRole = "super_admin" | "manager" | "agent";
 export type AgentStatus = "active" | "disabled";
 
 export type SessionAgent = {
+  /** Bearer token issued at login; the server resolves it to this agent. */
+  token: string;
   id: string;
   name: string;
   email: string;

@@ -4,6 +4,8 @@ import {
   assertIpAllowed,
   clientIp,
   createAgent,
+  createSession,
+  deleteSession,
   getAgentByEmail,
   getTenant,
   listAgents,
@@ -15,9 +17,7 @@ import {
   updateTenantSettings,
 } from "../inbox/index.js";
 import { canSeePhone } from "../inbox/policy.js";
-import { DEMO_PASSWORDS } from "../inbox/agents.js";
-import { hashPassword, verifyPassword } from "../inbox/password.js";
-import { query } from "../db.js";
+import { verifyPassword } from "../inbox/password.js";
 import type { AgentRole, AgentStatus } from "../inbox/types.js";
 import { asyncHandler, requireAction, requireAgent, type AuthedRequest } from "./middleware.js";
 
@@ -33,17 +33,10 @@ authRouter.post(
       return;
     }
     const agent = await getAgentByEmail(email);
-    const hashOk = agent ? await verifyPassword(password, agent.password_hash) : false;
-    const demoOk = Boolean(agent && DEMO_PASSWORDS[agent.email.toLowerCase()] === password);
-    if (!agent || (!hashOk && !demoOk)) {
+    const passwordOk = agent ? await verifyPassword(password, agent.password_hash) : false;
+    if (!agent || !passwordOk) {
       res.status(401).json({ error: "Invalid email or password" });
       return;
-    }
-    if (demoOk && !hashOk) {
-      await query("UPDATE agents SET password_hash = $2 WHERE id = $1", [
-        agent.id,
-        await hashPassword(password),
-      ]);
     }
     if (agent.status !== "active") {
       res.status(403).json({ error: "This account is disabled" });
@@ -51,7 +44,9 @@ authRouter.post(
     }
     await assertIpAllowed(agent.tenant_id, clientIp(req), "sign in");
     const tenant = await getTenant(agent.tenant_id);
+    const token = await createSession(agent);
     res.json({
+      token,
       agent: sessionAgent(
         agent,
         tenant?.name ?? "",
@@ -59,6 +54,15 @@ authRouter.post(
         tenant?.agents_can_see_history !== 0 && tenant?.agents_can_see_history !== false,
       ),
     });
+  }),
+);
+
+authRouter.post(
+  "/logout",
+  requireAgent,
+  asyncHandler(async (req, res) => {
+    await deleteSession((req as AuthedRequest).sessionToken);
+    res.json({ ok: true });
   }),
 );
 

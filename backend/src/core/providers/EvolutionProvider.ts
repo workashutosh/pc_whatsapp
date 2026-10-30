@@ -5,6 +5,7 @@ import type {
   ConnectNumberResult,
   MessageMedia,
   NormalizedIncomingEvent,
+  NumberLookupResult,
   NormalizedIncomingMessage,
   QrPayload,
   SendImageInput,
@@ -31,7 +32,20 @@ export class EvolutionProvider implements WhatsAppProvider {
     private readonly baseUrl = config.evolutionApiUrl,
     private readonly apiKey = config.evolutionApiKey,
     private readonly webhookUrl = config.webhookUrl,
+    private readonly webhookSecret = config.webhookSecret,
   ) {}
+
+  /** Where Evolution should POST events, with the shared secret so /webhook/whatsapp can reject forgeries. */
+  private webhookTarget(): { url: string; headers: Record<string, string> } {
+    const url = new URL(this.webhookUrl);
+    url.searchParams.set("secret", this.webhookSecret);
+    return { url: url.toString(), headers: { "x-webhook-secret": this.webhookSecret } };
+  }
+
+  async syncWebhook(connection: WhatsAppConnection): Promise<void> {
+    if (!connection.instance_name) return;
+    await this.setWebhook(connection.instance_name);
+  }
 
   async connectNumber(_tenantId: string, instanceName: string): Promise<ConnectNumberResult> {
     const created = await this.request<Record<string, unknown>>("POST", "/instance/create", {
@@ -40,7 +54,8 @@ export class EvolutionProvider implements WhatsAppProvider {
       integration: "WHATSAPP-BAILEYS",
       webhook: {
         enabled: true,
-        url: this.webhookUrl,
+        url: this.webhookTarget().url,
+        headers: this.webhookTarget().headers,
         byEvents: false,
         base64: true,
         events: [
@@ -89,6 +104,25 @@ export class EvolutionProvider implements WhatsAppProvider {
     if (!name) return;
     await this.request("DELETE", `/instance/logout/${encodeURIComponent(name)}`).catch(() => undefined);
     await this.request("DELETE", `/instance/delete/${encodeURIComponent(name)}`).catch(() => undefined);
+  }
+
+  async lookupNumber(connection: WhatsAppConnection, phone: string): Promise<NumberLookupResult> {
+    const instance = requireInstance(connection);
+    const digits = phone.replace(/\D/g, "");
+    const rows = await this.request<Array<Record<string, unknown>>>(
+      "POST",
+      `/chat/whatsappNumbers/${encodeURIComponent(instance)}`,
+      { numbers: [digits] },
+    );
+    const row = Array.isArray(rows) ? rows[0] : undefined;
+    const exists = Boolean(row?.exists);
+    const jid = exists && typeof row?.jid === "string" ? row.jid : null;
+    return {
+      exists,
+      jid,
+      phone: phoneFromJid(jid) ?? digits,
+      name: typeof row?.name === "string" && row.name ? row.name : null,
+    };
   }
 
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
@@ -292,7 +326,8 @@ export class EvolutionProvider implements WhatsAppProvider {
     const payload = {
       webhook: {
         enabled: true,
-        url: this.webhookUrl,
+        url: this.webhookTarget().url,
+        headers: this.webhookTarget().headers,
         byEvents: false,
         base64: true,
         events: [
@@ -307,7 +342,7 @@ export class EvolutionProvider implements WhatsAppProvider {
       await this.request("POST", `/webhook/set/${encodeURIComponent(instanceName)}`, payload);
     } catch {
       await this.request("POST", `/webhook/set/${encodeURIComponent(instanceName)}`, {
-        url: this.webhookUrl,
+        url: this.webhookTarget().url,
         webhook_by_events: false,
         webhook_base64: true,
         events: payload.webhook.events,
@@ -344,7 +379,7 @@ export class EvolutionProvider implements WhatsAppProvider {
       const reason = error instanceof Error ? error.message : String(error);
       throw Object.assign(
         new Error(
-          `Evolution API is not reachable at ${this.baseUrl}. Start it with: docker compose up -d postgres redis evolution-api (${reason})`,
+          `Evolution API is not reachable at ${this.baseUrl}. Start it with ./start.sh (first time: ./infra/evolution/setup.sh) (${reason})`,
         ),
         { status: 503 },
       );

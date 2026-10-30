@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
@@ -26,15 +26,15 @@ function rewriteSql(sql: string): string {
     .replace(/NULLS LAST/g, "");
 }
 
-function bindParam(value: unknown): unknown {
+function bindParam(value: unknown): SQLInputValue {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "boolean") return value ? 1 : 0;
   if (value === undefined) return null;
-  return value;
+  return value as SQLInputValue;
 }
 
-function toSqlite(sql: string, params: unknown[]): { sql: string; params: unknown[] } {
-  const mapped: unknown[] = [];
+function toSqlite(sql: string, params: unknown[]): { sql: string; params: SQLInputValue[] } {
+  const mapped: SQLInputValue[] = [];
   const converted = rewriteSql(sql).replace(/\$(\d+)/g, (_, raw: string) => {
     mapped.push(bindParam(params[Number(raw) - 1]));
     return "?";
@@ -75,20 +75,6 @@ export async function query<T = Record<string, unknown>>(
   }
 }
 
-export async function withTransaction<T>(
-  fn: (client: { query: typeof query }) => Promise<T>,
-): Promise<T> {
-  db.exec("BEGIN");
-  try {
-    const result = await fn({ query });
-    db.exec("COMMIT");
-    return result;
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-}
-
 export function isUniqueViolation(error: unknown): boolean {
   const code = (error as { code?: string }).code ?? "";
   const message = error instanceof Error ? error.message : String(error);
@@ -103,31 +89,17 @@ export async function migrateAndSeed(): Promise<void> {
   const here = dirname(fileURLToPath(import.meta.url));
   const schema = readFileSync(join(here, "schema.sql"), "utf8");
   db.exec(schema);
-  for (const statement of [
-    "ALTER TABLE conversations ADD COLUMN customer_jid TEXT",
-    "ALTER TABLE tenants ADD COLUMN agents_can_see_phone INTEGER NOT NULL DEFAULT 0",
-    "ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT 'agent'",
-    "ALTER TABLE agents ADD COLUMN password_hash TEXT",
-    "ALTER TABLE agents ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
-    "ALTER TABLE agents ADD COLUMN disabled_at TEXT",
-    "ALTER TABLE tenants ADD COLUMN allow_all_ips INTEGER NOT NULL DEFAULT 1",
-    "ALTER TABLE tenants ADD COLUMN agents_can_see_history INTEGER NOT NULL DEFAULT 1",
-    "ALTER TABLE conversations ADD COLUMN assigned_at TEXT",
-    "ALTER TABLE conversations ADD COLUMN assignee_can_see_history INTEGER",
-    `CREATE TABLE IF NOT EXISTS tenant_allowed_ips (
-      id TEXT PRIMARY KEY DEFAULT (uuid()),
-      tenant_id TEXT NOT NULL REFERENCES tenants(id),
-      ip TEXT NOT NULL,
-      created_at TEXT DEFAULT (now_iso()),
-      UNIQUE (tenant_id, ip)
-    )`,
-  ]) {
-    try {
-      db.exec(statement);
-    } catch {
-      // already present on existing databases
-    }
-  }
+  // Columns added after the first release. Older databases get them here; fresh ones already have them from schema.sql.
+  addColumnIfMissing("conversations", "customer_jid", "TEXT");
+  addColumnIfMissing("tenants", "agents_can_see_phone", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing("agents", "role", "TEXT NOT NULL DEFAULT 'agent'");
+  addColumnIfMissing("agents", "password_hash", "TEXT");
+  addColumnIfMissing("agents", "status", "TEXT NOT NULL DEFAULT 'active'");
+  addColumnIfMissing("agents", "disabled_at", "TEXT");
+  addColumnIfMissing("tenants", "allow_all_ips", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing("tenants", "agents_can_see_history", "INTEGER NOT NULL DEFAULT 1");
+  addColumnIfMissing("conversations", "assigned_at", "TEXT");
+  addColumnIfMissing("conversations", "assignee_can_see_history", "INTEGER");
 
   if (!config.demoMode) {
     await query(
@@ -136,6 +108,8 @@ export async function migrateAndSeed(): Promise<void> {
        WHERE provider = 'demo' AND status IN ('pending', 'connected')`,
     );
   }
+
+  if (!config.seedDemoAccounts) return;
 
   const { rows } = await query<{ count: string }>("SELECT CAST(COUNT(*) AS TEXT) AS count FROM tenants");
   if (Number(rows[0]?.count ?? 0) === 0) {
@@ -160,28 +134,26 @@ async function ensureDemoAccounts(tenantId: string): Promise<void> {
     { name: "Bob Fernandes", email: "bob@acme.test", role: "manager", password: "AcmeManager!1" },
     { name: "Riya Kapoor", email: "riya@acme.test", role: "agent", password: "AcmeAgent!1" },
   ];
+  // Only create missing accounts. Never overwrite passwords or roles an admin has since changed.
   for (const account of accounts) {
-    const existing = await query<{ id: string; password_hash: string | null }>(
-      "SELECT id, password_hash FROM agents WHERE lower(email) = lower($1)",
+    const existing = await query<{ id: string }>(
+      "SELECT id FROM agents WHERE lower(email) = lower($1)",
       [account.email],
     );
-    const passwordHash = await hashPassword(account.password);
-    if (existing.rows[0]) {
-      await query(
-        `UPDATE agents
-         SET role = $2, status = 'active', disabled_at = NULL, password_hash = $3
-         WHERE id = $1`,
-        [existing.rows[0].id, account.role, passwordHash],
-      );
-    } else {
-      await query(
-        `INSERT INTO agents (tenant_id, name, email, role, password_hash, status)
-         VALUES ($1, $2, $3, $4, $5, 'active')`,
-        [tenantId, account.name, account.email, account.role, passwordHash],
-      );
-    }
+    if (existing.rows[0]) continue;
+    await query(
+      `INSERT INTO agents (tenant_id, name, email, role, password_hash, status)
+       VALUES ($1, $2, $3, $4, $5, 'active')`,
+      [tenantId, account.name, account.email, account.role, await hashPassword(account.password)],
+    );
   }
   console.log(
     "Demo accounts: alice@acme.test / AcmeAdmin!1 · bob@acme.test / AcmeManager!1 · riya@acme.test / AcmeAgent!1",
   );
+}
+
+function addColumnIfMissing(table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (columns.some((item) => item.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }

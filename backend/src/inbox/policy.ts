@@ -3,14 +3,15 @@ import type { Agent, AgentRole, Conversation } from "./types.js";
 export type PolicyAction =
   | "viewAllChats"
   | "assign"
+  | "startConversation"
   | "stopConversation"
   | "manageWhatsApp"
   | "managePeople"
   | "tenantSettings";
 
 const ROLE_ACTIONS: Record<AgentRole, PolicyAction[]> = {
-  super_admin: ["viewAllChats", "assign", "stopConversation", "manageWhatsApp", "managePeople", "tenantSettings"],
-  manager: ["viewAllChats", "assign", "stopConversation", "managePeople"],
+  super_admin: ["viewAllChats", "assign", "startConversation", "stopConversation", "manageWhatsApp", "managePeople", "tenantSettings"],
+  manager: ["viewAllChats", "assign", "startConversation", "stopConversation", "managePeople"],
   agent: [],
 };
 
